@@ -1,143 +1,174 @@
 # Learnable
 
-A framework for understanding software systems you did not write — built for the
-case where agents do the building and you still intend to be the engineer.
+Turns a repository into a **first-principles learning engine** — not
+documentation of it.
 
-It scans a repository and produces a **knowledge base**: a portable, diffable
-JSON document describing the tech stack, the architecture, the cross-stack
-request paths, the decisions embedded in the code, and the transferable
-engineering concepts each of those is an instance of.
+That distinction is the whole point. Documentation frameworks describe a system
+to a reader assumed to already understand its parts: they tell you the service
+runs on EKS and take for granted that you know what a managed control plane is,
+why you would want one, and what it costs. That assumption fails precisely when
+an agent wrote the system and chose components you have never operated.
 
-> **Status.** Milestone 1 of 3 is complete: the format is specified and the
-> extractor works end to end, validated against a real third-party repository.
-> The viewer is not built yet — see [Roadmap](#roadmap).
+Learnable inverts it. Every component is explained from the problem that forces
+it to exist, and **implementation is the last thing you are shown.**
 
----
-
-## Why not just generate a wiki
-
-The obvious version of this — point an agent at a repo, have it write
-documentation — fails in three specific ways, and every design decision here is
-a response to one of them.
-
-**1. Description is not understanding.** A well-organised document about your
-codebase produces familiarity, which feels like knowledge and is not. Learnable
-therefore extracts *traces* and *concepts* rather than prose, and the concept
-catalog stores derivations with active-recall probes instead of definitions.
-
-**2. It is stale on the next commit.** A snapshot competing against an agent
-that ships daily loses. So the knowledge base is deterministic, byte-stable,
-and meant to be committed: `git diff` on it *is* the "what did the agent change
-about my system" briefing.
-
-**3. It teaches trivia, not principles.** "AuthService calls TokenRepository"
-makes you better at this repo. So the framework keeps **two graphs** — the repo
-graph, which is disposable, and the concept graph, which accumulates across
-every repository you ever scan. That second graph is the actual deliverable.
-
-And one failure mode that would make the whole thing worse than useless:
-**confident, plausible, wrong architecture claims.** Every fact carries
-provenance — `extracted` (from an AST or manifest), `heuristic` (a convention
-match), `inferred` (a model's claim) — with `file:line` evidence. A reader can
-always jump from a claim to the bytes that justify it.
+> **Status.** The format and the extractor are complete and verified against a
+> real third-party repository. The analysis contracts are written. The viewer is
+> next — see [Roadmap](#roadmap).
 
 ---
 
-## What it produces
+## The four layers
+
+| Layer | Question | Content | Produced by |
+|---|---|---|---|
+| **1. Structural** | What exists? | services, modules, datastores, queues, APIs, dependencies, infra | Deterministic extractor |
+| **2. Behavioral** | What happens? | request paths, event flows, failure paths | Extractor traces + analyst |
+| **3. Design** | Why built this way? | constraints, trade-offs, patterns, invariants, consistency, scaling, security boundaries | Analyst |
+| **4. Learning model** | How should a human learn this? | an ordered curriculum with prerequisites, predictions, drill-downs | Analyst |
+
+Layers 1–2 are *facts about the system*. **Layers 3–4 are the product.** A tool
+that stops at Layer 2 is a code-intelligence tool, and there are many.
+
+## Two engines, and why both
+
+Layers 3 and 4 cannot be extracted — no syntax tree contains the reason EKS was
+chosen over ECS, or which invariant must never be violated. That needs a
+language model. But a model turned loose on a repository produces fluent,
+confident, partly-false architecture, which is the *worst* possible output: the
+reader cannot tell which half is wrong and is learning from all of it.
+
+```
+ repo ──► EXTRACTOR ──► kb.json        Layers 1–2. Deterministic, verifiable.
+          (AST, manifests,             Every node carries file:line.
+           IaC, git history)
+                             │  evidence to cite
+                             ▼
+ repo ──► ANALYST ──────► artifact.json    Layers 3–4. Contract-driven.
+ + docs   (LLM, driven by                  Must cite the KB or the source.
+           contracts/)
+                             │
+                             ▼
+                          VIEWER
+```
+
+The extractor's most important job is not producing a graph. **It is being the
+thing the analyst is required to cite:**
+
+> A claim that cannot be anchored to a KB node id or a `file:line` is not
+> stated. It becomes an **open question**.
+
+This is enforced mechanically, not by good intentions — the test suite rejects
+an artifact citing a node that does not exist or a line past the end of a file.
+
+---
+
+## Lenses: cross-sections, not folders
+
+A repository is not understood in directory order. For a repo deploying an EKS
+cluster with Terraform via GitHub Actions, the lenses are **not** `.github/`,
+`terraform/`, `k8s/`. They are:
+
+| Lens | The question it answers |
+|---|---|
+| `ci-cd` | What happens when I push, and what does each workflow step accomplish? |
+| `iac` | How is infrastructure described, and which Terraform patterns are in use? |
+| `runtime-platform` | What is the cluster, and what does a managed control plane give and cost? |
+| `network` | How does a packet from the internet reach a pod? |
+| `security` | What can assume which identity, and where are the trust boundaries? |
+
+`runtime-platform` explains **EKS from first principles** — the problem a managed
+control plane solves, what you would do without it, where that breaks, what you
+pay — *before* saying anything about how this repository configures it.
+
+### Progressive disclosure is structural
+
+"Explore further on demand" is a schema requirement, not a UI nicety. Sections
+carry a `depth` and either generated children or a **stub naming the contract
+that would generate them**. Opening a stub triggers generation, so cost tracks
+what is actually read, and the top level stays short enough to be read at all.
+
+**Annotated source** is a first-class content type: a file plus line-range
+explanations. It is how config-heavy domains are taught, because the file *is*
+the subject.
+
+---
+
+## The lesson spine
+
+| # | Intent | Question |
+|---|---|---|
+| 1 | `purpose` | What problem does this system solve, and for whom? |
+| 2 | `structure` | What are the major subsystems? |
+| 3 | `boundaries` | Why are they separated *there*? |
+| 4 | `behavior` | How does one request flow through? |
+| 5 | `failure` | What happens when X fails? |
+| 6 | `technology-choice` | Why Y rather than the obvious alternative? |
+| 7 | `invariants` | What must never be violated? |
+| 8 | `implementation` | Now inspect the code. |
+
+Two properties are load-bearing:
+
+**Implementation is last.** Starting at the code means every design decision
+arrives as an unexplained fact, leaving a reader able to *navigate* a system
+without *understanding* it — exactly the position an experienced engineer is in
+when an agent writes their codebase.
+
+**Each lesson is a question.** "Authentication" is a topic to skim; "Can this
+system log out a stolen session?" is a question to answer. Each is asked
+**before** the code is revealed — the reader commits, then sees the evidence.
+Being wrong is the mechanism.
+
+---
+
+## What the extractor produces
 
 Scanning [`fastapi/full-stack-fastapi-template`](https://github.com/fastapi/full-stack-fastapi-template)
 (246 files, Python + TypeScript):
 
 ```
-nodes    978  — 276 symbol, 248 dataModel, 174 uiComponent, 146 file,
-                 74 dependency, 24 envVar, 23 route, 7 infraResource,
-                 4 service, 2 datastore
-edges    1057
-traces   23
-stack    35 items
-concepts 13 bindings
+nodes 978  edges 1057  traces 23  stack 35  concept bindings 13
 ```
 
-### The trace view — one user action, followed all the way down
-
-The single highest-value artifact, and the reason the extractor crosses service
-boundaries at all:
+### The trace view
 
 ```
 User creates an item (from AddItem)
 
  0. ui / ui-event      `AddItem` needs this data              [form-state]
  1. client-call        `createItem` issues POST /api/v1/items/ [dto]
- 2. transport          POST /api/v1/items/ crosses the network [wire]
- 3. api / middleware   Caller is resolved from the bearer token
+ 2. transport          crosses the network                     [wire]
+ 3. api / middleware   Caller resolved from the bearer token
  4. api / route        Router dispatches to the handler
  5. api / validation   Body is parsed into `ItemCreate`        [dto]
  6. domain / handler   `create_item` runs
  7. data / store       Writes `Item` to table `item`           [row]
  8. data / query       Reads `Item` from table `item`          [row]
- 9. api / serialize    Result is reshaped into `ItemPublic`    [dto]
-10. transport          Response travels back to the browser    [wire]
-11. ui / render        `AddItem` re-renders with the data      [form-state]
+ 9. api / serialize    Result reshaped into `ItemPublic`       [dto]
+10. transport          Response travels back                    [wire]
+11. ui / render        `AddItem` re-renders                    [form-state]
 ```
 
-Every step carries a `file:line` citation and a provenance badge.
+The bracketed shapes, read in sequence, are the **data-lifecycle view** — it
+falls out of the same structure, so the two most valuable views cost one
+implementation.
 
-**The data-lifecycle view comes free.** The bracketed shapes above, read in
-sequence, are the journey of one piece of data through every representation it
-takes. Where `kind` changes is where the engineering decisions live — so the two
-most valuable views cost one implementation.
+### The cross-stack join
 
-### How the cross-stack join works
-
-Every other extractor works inside a single service. Traces are the one place
-the knowledge base crosses a process boundary, and it does so on the only thing
-both sides genuinely agree on: **HTTP method + path**.
-
-Getting there is the hard part. The route below is not written down anywhere:
+Traces are the only place the KB crosses a process boundary, on the one thing
+both sides agree on: **method + path**. That path is written down nowhere:
 
 ```python
-# app/core/config.py     API_V1_STR: str = "/api/v1"
-# app/main.py            app.include_router(api_router, prefix=settings.API_V1_STR)
-# app/api/main.py        api_router.include_router(items.router)
-# app/api/routes/items.py  router = APIRouter(prefix="/items")
-#                          @router.get("/")
+# core/config.py      API_V1_STR: str = "/api/v1"
+# main.py             app.include_router(api_router, prefix=settings.API_V1_STR)
+# api/main.py         api_router.include_router(items.router)
+# api/routes/items.py router = APIRouter(prefix="/items")
+#                     @router.get("/")
 ```
 
 The extractor resolves the settings constant, walks the `include_router` mount
-tree to the application object, and composes `GET /api/v1/items/`. Only then can
-it be matched against `url: '/api/v1/items/'` in the generated frontend client.
-
-### Decisions
-
-Reconstructed ADRs stating what was chosen, what was not, and **what it cost** —
-always as observations, never endorsements:
-
-> **Authentication is stateless, carried in a signed token**
-> - No session lookup, so any instance can serve any request — this is what makes horizontal scaling straightforward.
-> - Revocation is the price: a token stays valid until it expires, because nothing is consulted that could mark it dead.
-> - The token is readable by anyone holding it — signing proves integrity, not confidentiality.
-
-### Concepts — the part that outlives the repo
-
-Concepts are stored as **derivations**, never definitions:
-
-| field | |
-|---|---|
-| `problem` | the constraint in the world that forces the issue |
-| `naive` | what you would obviously try first |
-| `failure` | the concrete scenario where that breaks |
-| `resolution` | the technique, as a response to that failure |
-| `cost` | **what you gave up** — mandatory, because a technique taught without its cost produces cargo-culting |
-
-Detection rules bind them to real code, so "optimistic concurrency" stops being
-a phrase you have read and becomes a thing with sightings and line numbers in
-your own systems. Probes make it active rather than passive:
-
-> **predict** — *A user's laptop is stolen twenty minutes into a session. Before
-> you look at the code: can this system log that session out immediately?*
-
-`predict` probes are asked *before* the code is revealed. Being wrong is the
-mechanism, not a failure.
+tree to the application object, composes `GET /api/v1/items/`, then matches it
+against `url: '/api/v1/items/'` in the generated frontend client.
 
 ---
 
@@ -145,41 +176,39 @@ mechanism, not a failure.
 
 ```bash
 cd packages/extractor && npm install && npm run build
-
-node dist/cli.js scan /path/to/repo          # writes <repo>/.learnable/kb.json
-node dist/cli.js scan /path/to/repo -o kb.json --no-git
+node dist/cli.js scan /path/to/repo      # writes <repo>/.learnable/kb.json
 ```
 
-Commit `.learnable/kb.json` alongside the code. Because node ids are
-deterministic and output is sorted, the diff between two scans is a readable
-account of how the system changed.
-
----
+Commit `.learnable/kb.json` alongside the code. Node ids are deterministic and
+output is sorted, so the diff between two scans is a readable account of how the
+system changed.
 
 ## Layout
 
 ```
-spec/       kb.schema.json, concept.schema.json — the portable contract
+spec/       framework.md — the four layers and the two-engine architecture
+            kb.schema.json        Layers 1–2, the evidence substrate
+            artifact.schema.json  Layers 3–4, what the viewer renders
+            concept.schema.json   first-principles units, patterns and technologies
+contracts/  the LLM instruction set — conventions, orientation, lens, curriculum
+            lenses/  domain contracts: GitHub Actions, Terraform, EKS
 catalog/    concepts.json — 20 transferable concepts, repo-independent
-fixtures/   miniapp — a small full stack exercising the hard extraction paths
+fixtures/   miniapp + a worked example artifact
 packages/extractor/
-  core/         tree-sitter WASM parsing, file walk, git co-change
-  extractors/   manifests, python, typescript, infra
-  synth/        traces, decisions
-  concepts/     catalog loading and binding
 ```
 
-Language support is via **tree-sitter compiled to WebAssembly** — no native
-toolchain, identical behaviour everywhere, and adding a language is a grammar
-file rather than a rebuild. Today: Python (FastAPI, SQLModel/SQLAlchemy,
-pydantic-settings), TypeScript/JavaScript (React, TanStack Router/Query,
-Express/Fastify, Prisma), and IaC (compose, Dockerfile, Terraform, Kubernetes).
+**Adding a domain is writing one contract file. No code changes.**
+
+Language support is tree-sitter compiled to WebAssembly — no native toolchain,
+identical everywhere. Today: Python (FastAPI, SQLModel, pydantic-settings),
+TypeScript/JavaScript (React, TanStack, Express, Prisma), IaC (compose,
+Dockerfile, Terraform, Kubernetes).
 
 ---
 
 ## Verification
 
-The extractor was audited against the FastAPI template rather than eyeballed:
+Audited against the FastAPI template rather than eyeballed:
 
 | Check | Result |
 |---|---|
@@ -187,40 +216,44 @@ The extractor was audited against the FastAPI template rather than eyeballed:
 | Full paths resolved through the mount chain | 23 / 23 |
 | Route → handler pairing | 23 / 23 correct |
 | Client call site → route joins | 23 / 23 exact method+path identity |
-| Persisted tables (`table=True`) | exact match |
-| Required env vars (no-default settings fields) | exact match |
-| Superuser/user auth inference | correct on all spot-checks |
+| Persisted tables, required env vars | exact match |
 
-`npm test` (9 tests) additionally enforces the properties the format depends on:
-emitted output validates against the JSON Schema, every `extracted` claim cites
-evidence, no edge dangles, ids are unique, and **two scans of an unchanged repo
-are byte-identical** — without which the change-briefing idea collapses.
+`npm test` — **16 tests** — enforces the properties the framework depends on:
 
-Coverage gaps are recorded in the KB's own `diagnostics[]` rather than being
-silently omitted, because a knowledge base that hides what it failed to parse
-cannot be told apart from one describing a system that genuinely lacks the
-feature.
+- emitted output validates against both schemas
+- **every cited node id exists**; every `file:line` resolves
+- every referenced concept exists in the catalog
+- **every first-principles derivation states a cost** (an empty cost is a defect,
+  not a style lapse — it is what produces cargo-culting)
+- every lesson asks before it reveals, and names the plausible wrong answer
+- the curriculum keeps implementation last
+- two scans of an unchanged repo are byte-identical
+
+Coverage gaps go in the KB's own `diagnostics[]` and the artifact's
+`openQuestions[]`. An artifact with no open questions is not thorough; it is
+overconfident.
 
 ---
 
 ## Roadmap
 
-- **Milestone 1 — format + extractor.** ✅ Complete.
-- **Milestone 2 — the viewer.** Static SPA over `kb.json`: the trace player, the
-  data-lifecycle ribbon, a zoomable layered system map, and the concept graph
-  with mastery state. No server; reads the committed JSON.
-- **Milestone 3 — delta briefings.** Diff two knowledge bases across an agent's
-  PR and render what changed, which concepts newly entered your graph, and which
-  parts of your mental model are now stale. This is what makes the framework a
-  daily habit rather than a one-time read.
+- **Format + extractor (Layers 1–2).** ✅ Complete and verified.
+- **Analysis contracts (Layers 3–4).** ✅ Written, with a worked example artifact.
+- **Next — the viewer.** Static SPA over `kb.json` + `artifact.json`: lens board,
+  lesson spine with predict-then-reveal, trace player, lifecycle ribbon,
+  annotated-source panel, first-principles cards, drill-down expansion.
+- **Then — the analyst runner.** Executes the contracts against a repo and emits
+  `artifact.json`, including on-demand expansion of stubs.
+- **Then — delta briefings.** Diff two KBs across an agent's PR: what changed,
+  which concepts newly entered your graph, which parts of your mental model are
+  now stale.
 
 ### Known limitations
 
-- Call resolution within TypeScript is name-based, not a full type-aware
-  resolver; ambiguous names are marked `heuristic` with lowered confidence.
-- Terraform's value language is not evaluated — resources are extracted, but
-  interpolated attribute values are deliberately not reported rather than
-  reported wrongly.
+- TypeScript call resolution is name-based, not type-aware; ambiguous names are
+  marked `heuristic` with lowered confidence.
+- Terraform's value language is not evaluated — interpolated values are
+  deliberately not reported rather than reported wrongly.
 - Traces reflect the framework's request pipeline, not a recorded execution.
-  They are labelled `heuristic` for that reason.
-- Concept explanations are authored content; only the *sightings* are extracted.
+- Concept and lens explanations are authored or inferred; only the *sightings*
+  are extracted. The provenance badge always says which.

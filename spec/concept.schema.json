@@ -19,6 +19,11 @@
       "properties": {
         "id": { "type": "string", "pattern": "^concept\\.[a-z0-9-]+$" },
         "name": { "type": "string" },
+        "subject": {
+          "enum": ["pattern", "technology"],
+          "default": "pattern",
+          "description": "`pattern` is a technique (idempotency, optimistic locking). `technology` is a product or service (EKS, Terraform remote state, GitHub Actions). Both use the same derivation, and that is the point: a technology explained from first principles transfers to its competitors, because what you learned was the trade-off rather than the product."
+        },
         "category": {
           "enum": [
             "data-modelling", "persistence", "api-design", "auth", "security",
