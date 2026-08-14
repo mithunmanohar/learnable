@@ -1,0 +1,551 @@
+{
+  "catalogVersion": "0.1.0",
+  "concepts": [
+    {
+      "id": "concept.stateless-auth",
+      "name": "Stateless authentication (signed tokens)",
+      "category": "auth",
+      "oneLiner": "Prove who you are with a signature the server can check alone, instead of a session it has to look up.",
+      "firstPrinciples": {
+        "problem": "HTTP forgets. Each request arrives with no memory of the last one, yet the server must know who is asking before it can decide what to allow.",
+        "naive": "Give each user a random session id at login, store it in a table, and look it up on every request. This is simple and it works.",
+        "failure": "Now every single request touches shared state. Run a second instance and both must reach the same store; that store becomes the thing whose outage logs everyone out, and the lookup sits in the latency path of literally every request.",
+        "resolution": "Put the identity in the token itself and sign it. The server recomputes the signature with a key only it holds: if the signature checks out, the contents were not tampered with, and no lookup was needed to establish that.",
+        "cost": "You gave up revocation. Nothing is consulted, so nothing can say 'this one is now invalid' — a stolen token works until it expires. That is why expiry windows are short, and why 'log out everywhere' needs machinery a session table gets for free. The token is also merely signed, not encrypted: anyone holding it can read it."
+      },
+      "prerequisites": ["concept.password-hashing"],
+      "seeAlso": ["concept.boundary-validation"],
+      "probes": [
+        {
+          "id": "probe.jwt.revoke",
+          "kind": "predict",
+          "question": "A user's laptop is stolen twenty minutes into a session. Before you look at the code — can this system log that session out immediately?",
+          "answer": "No. Nothing is consulted when the token is verified, so there is no record to invalidate. The token stays valid until it expires. Systems that need real revocation add a denylist or short-lived tokens plus refresh — both of which reintroduce exactly the shared lookup that statelessness removed.",
+          "difficulty": "working"
+        },
+        {
+          "id": "probe.jwt.secrets",
+          "kind": "diagnose",
+          "question": "Someone adds the user's internal risk score to the token payload so the frontend can read it without another call. What is wrong with this?",
+          "answer": "A signed token is not a secret. The payload is base64, not encryption — anyone holding the token can read the score, including the user. Signing guarantees the contents were not modified; it guarantees nothing about who can see them.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(python-jose|pyjwt|jsonwebtoken|jose)$", "strength": 0.9, "note": "Signs and verifies tokens." },
+        { "kind": "callName", "pattern": "(jwt\\.encode|jwt\\.decode|jwt\\.sign|jwt\\.verify)", "strength": 1, "note": "Direct token signing or verification." }
+      ]
+    },
+    {
+      "id": "concept.password-hashing",
+      "name": "Password hashing",
+      "category": "security",
+      "oneLiner": "Store something derived from the password that is deliberately slow to reverse, never the password.",
+      "firstPrinciples": {
+        "problem": "You must check a password on every login, which seems to require knowing it. But every stored copy is a copy that can be stolen, and people reuse passwords across services.",
+        "naive": "Store the password. Or, once that is obviously bad, store a hash of it — SHA-256, say — and compare hashes.",
+        "failure": "Fast hashes are the problem. A GPU computes billions of SHA-256 hashes per second, so an attacker with your table simply tries every common password. Identical passwords also produce identical hashes, so one crack reveals every user who shared it.",
+        "resolution": "Use a hash designed to be slow and memory-hungry (bcrypt, argon2), with a random per-user salt mixed in. Slowness costs the honest server one hash per login and costs the attacker the entire search space. The salt makes identical passwords hash differently.",
+        "cost": "Login is now deliberately expensive, which is a real CPU budget on a busy service and a denial-of-service surface if unbounded. The work factor also has to be raised as hardware improves, meaning stored hashes need rehashing over time."
+      },
+      "prerequisites": [],
+      "probes": [
+        {
+          "id": "probe.hash.why-slow",
+          "kind": "recall",
+          "question": "Why is bcrypt preferred over SHA-256 for passwords, given SHA-256 is also a one-way hash?",
+          "answer": "Because SHA-256 is fast, and speed helps the attacker far more than it helps you. You compute one hash per login; the attacker computes billions per second against a stolen table. bcrypt is deliberately slow and memory-hard, which flips that asymmetry.",
+          "difficulty": "intro"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(passlib|bcrypt|argon2.*)$", "strength": 0.9 },
+        { "kind": "symbolName", "pattern": "(get_password_hash|verify_password|hash_password)", "strength": 0.9 }
+      ]
+    },
+    {
+      "id": "concept.boundary-validation",
+      "name": "Validation at the trust boundary",
+      "category": "api-design",
+      "oneLiner": "Parse untrusted input into a typed object at the edge, so everything inside can assume it is valid.",
+      "firstPrinciples": {
+        "problem": "Input from a network is arbitrary bytes. Nothing about it is guaranteed — not the fields, not the types, not the ranges — yet your code is written as though it were well-formed.",
+        "naive": "Check things where you use them: verify the email looks like an email just before sending to it, check the quantity is positive just before charging for it.",
+        "failure": "The checks scatter and then disagree. One path checks, another forgot to, and a third checks differently. Worse, you cannot look at a function and know what it may assume, so every function defensively re-checks or wrongly trusts.",
+        "resolution": "Validate once, at the boundary, and produce a *different type* on success. Not a checked dictionary — a typed object that can only exist if validation passed. Then the type system carries the guarantee inward for free.",
+        "cost": "You need a schema for every shape crossing the boundary, and it must be kept in step with what the shape means. Validation also becomes a place where a legitimate-but-unanticipated input gets rejected, which is its own class of bug."
+      },
+      "prerequisites": [],
+      "seeAlso": ["concept.dto-projection"],
+      "probes": [
+        {
+          "id": "probe.validation.parse-dont-validate",
+          "kind": "apply",
+          "question": "What is the difference between a function that returns `true` for valid input and one that returns a parsed typed object?",
+          "answer": "The boolean is forgotten the moment it is read — nothing downstream can tell that the check happened, so it gets repeated or skipped. The typed object carries the proof in the type: a function taking `UserCreate` cannot be handed unvalidated input, and the compiler enforces it. This is the 'parse, don't validate' distinction.",
+          "difficulty": "deep"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(pydantic|zod|joi|yup|marshmallow|class-validator)$", "strength": 0.85 },
+        { "kind": "attr", "pattern": "response_model|requestModel", "strength": 0.6 }
+      ]
+    },
+    {
+      "id": "concept.dto-projection",
+      "name": "Separating API shapes from storage shapes",
+      "category": "api-design",
+      "oneLiner": "What you store and what you publish are different types on purpose.",
+      "firstPrinciples": {
+        "problem": "The table has columns nobody outside should see — password hashes, internal flags, soft-delete markers — and columns whose names are an implementation detail you will want to change.",
+        "naive": "Serialise the row. It is already the right data and the framework will happily turn it into JSON.",
+        "failure": "The day someone adds a `hashed_password` or `internal_notes` column, it silently appears in an API response, because the response was defined as 'whatever the row has'. Renaming a column also becomes a breaking API change for every client.",
+        "resolution": "Declare an explicit output type listing exactly what leaves the server, and project the row onto it. Fields absent from the type cannot be serialised — the leak becomes structurally impossible rather than something a reviewer has to catch.",
+        "cost": "More types, and a new column must be added in several places before it becomes visible. That friction is the feature — it makes exposure a deliberate act — but it is friction, and it tempts people back toward returning the row."
+      },
+      "prerequisites": ["concept.boundary-validation"],
+      "probes": [
+        {
+          "id": "probe.dto.leak",
+          "kind": "predict",
+          "question": "A migration adds a `hashed_password` column to the users table. In this codebase, does it show up in `GET /users/me`? Answer before reading the handler.",
+          "answer": "No — provided the endpoint declares a response model that does not list the field. The projection is what stops it. Had the handler returned the table row directly, the column would have appeared in the API the moment the migration ran, with no code change and no review to catch it.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "symbolName", "pattern": "(Public|Response|Out|DTO|View)$", "strength": 0.6 },
+        { "kind": "attr", "pattern": "response_model", "strength": 0.8 }
+      ]
+    },
+    {
+      "id": "concept.orm-mapping",
+      "name": "Object-relational mapping",
+      "category": "persistence",
+      "oneLiner": "Tables described as classes, queries built as expressions, SQL generated for you.",
+      "firstPrinciples": {
+        "problem": "A relational database speaks tables and rows; your program speaks objects and references. Every read and write has to cross that gap, and hand-writing the crossing is repetitive and easy to get subtly wrong.",
+        "naive": "Write the SQL by hand and map columns onto objects in each function that needs it.",
+        "failure": "The table's shape ends up restated in every query, so a column rename means finding every string that mentions it. Nothing checks those strings until they run.",
+        "resolution": "Describe each table once as a class. The library derives the schema, builds queries from expressions it can type-check, and materialises rows back into objects.",
+        "cost": "The SQL that actually runs is no longer visible where you called it. Innocuous-looking attribute access can trigger a query, which is how N+1 patterns ship unnoticed, and anything the expression API cannot say still needs raw SQL."
+      },
+      "prerequisites": [],
+      "seeAlso": ["concept.n-plus-one", "concept.schema-migration"],
+      "probes": [
+        {
+          "id": "probe.orm.hidden-sql",
+          "kind": "diagnose",
+          "question": "A loop iterates over 200 fetched users and reads `user.items` inside it. What does the database see?",
+          "answer": "Potentially 201 queries: one for the users, then one per user when `items` is lazily loaded on first access. The code reads like plain attribute access, which is exactly why this is easy to ship. Fixing it means telling the ORM to load the relation eagerly in the original query.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(sqlalchemy|sqlmodel|prisma|@prisma/client|drizzle-orm|typeorm|sequelize|django)$", "strength": 0.9 },
+        { "kind": "nodeKind", "pattern": "dataModel", "strength": 0.4 }
+      ]
+    },
+    {
+      "id": "concept.n-plus-one",
+      "name": "The N+1 query problem",
+      "category": "performance",
+      "oneLiner": "One query to get the list, then one more per item — the classic ORM performance trap.",
+      "firstPrinciples": {
+        "problem": "You have a list of things and need something related to each one. The related data lives in another table.",
+        "naive": "Fetch the list, then loop over it and read the related attribute for each item. The code is clear and obviously correct.",
+        "failure": "Each attribute read issues its own query. A hundred rows means a hundred round trips, each with full network and planning overhead. It is imperceptible with ten test rows and catastrophic with ten thousand production rows — so it passes review and fails later.",
+        "resolution": "Tell the ORM to load the relation as part of the original query — a join or a second batched query — so the count stops scaling with the number of rows.",
+        "cost": "Eager loading fetches data you may not use, and joins can multiply rows before deduplication. The right choice depends on access patterns, so it cannot be enabled blindly everywhere."
+      },
+      "prerequisites": ["concept.orm-mapping"],
+      "probes": [
+        {
+          "id": "probe.nplus1.spot",
+          "kind": "apply",
+          "question": "Where would you look first to find an N+1 in an unfamiliar codebase?",
+          "answer": "Loops over query results where the body touches a relation attribute, and list endpoints that return nested objects. The fastest confirmation is turning on query logging and counting statements per request rather than reading code.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "callName", "pattern": "(selectinload|joinedload|subqueryload|\\.include\\(|with_entities)", "strength": 0.7, "note": "Eager-loading calls indicate the problem was encountered and addressed." }
+      ]
+    },
+    {
+      "id": "concept.schema-migration",
+      "name": "Schema migrations",
+      "category": "persistence",
+      "oneLiner": "Database structure changes as ordered, replayable scripts kept in version control.",
+      "firstPrinciples": {
+        "problem": "Code changes with every deploy, but the database holds data that must survive the change. The two have to evolve together without losing what is stored.",
+        "naive": "Have the app create tables from the model definitions at startup.",
+        "failure": "That only works on an empty database. It can create a table but not alter one that already has rows in it, so the first time a column changes in production you are hand-writing ALTER statements against live data, with no record of what was run where.",
+        "resolution": "Express each change as a numbered script with an explicit up and down. Any database can be brought to the current schema by replaying the ones it has not seen, and the sequence is reviewable in version control like everything else.",
+        "cost": "The migration and the model are two descriptions of one schema, and they can disagree. Down-migrations are often fictions — dropping a column back does not restore the data — and long-running migrations on large tables can lock them."
+      },
+      "prerequisites": ["concept.orm-mapping"],
+      "probes": [
+        {
+          "id": "probe.migration.autogen",
+          "kind": "diagnose",
+          "question": "Autogenerated a migration from model changes. Why review it before committing?",
+          "answer": "Autogeneration compares model to schema and guesses the intent. It commonly renders a rename as drop-then-add, which loses the column's data, and it misses things it cannot see, like data backfills or constraints added outside the models.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(alembic|prisma|knex|flyway|liquibase)$", "strength": 0.9 },
+        { "kind": "path", "pattern": "(migrations?|alembic/versions)/", "strength": 0.8 }
+      ]
+    },
+    {
+      "id": "concept.server-state-cache",
+      "name": "Server state as a cache, not component state",
+      "category": "state-management",
+      "oneLiner": "Remote data is a cached copy of something you do not own, and should be managed as such.",
+      "firstPrinciples": {
+        "problem": "Data on the server is owned by the server and can change without telling you. The browser only ever holds a copy that was true at the moment it was fetched.",
+        "naive": "Fetch in the component, put the result in local state. It is right there where it is used.",
+        "failure": "Two components needing the same data fetch it twice and drift apart. Every component hand-rolls loading and error branches. Nothing knows when the copy went stale, so users see old data after an update, and the fix — refetch everything — throws away the good parts too.",
+        "resolution": "Keep remote data in a cache outside the tree, keyed by what identifies the request. Components read from the key; the cache handles deduplication, loading state and refetching. Staleness becomes an explicit operation: invalidate a key.",
+        "cost": "A second source of truth to reason about, and correctness now depends on invalidating the right keys at the right times. Forgetting is the classic 'I added a row and the list did not update' bug, and over-invalidating throws away the benefit."
+      },
+      "prerequisites": [],
+      "seeAlso": ["concept.cache-invalidation"],
+      "probes": [
+        {
+          "id": "probe.querycache.stale",
+          "kind": "predict",
+          "question": "A form creates an item successfully, but the list above it still shows the old rows. The POST returned 201. What happened?",
+          "answer": "The mutation succeeded on the server but nothing told the cache that the list key was now stale, so the cached list was served again unchanged. The fix is invalidating that query key on success — which is why mutation handlers in these codebases almost always end with an invalidation call.",
+          "difficulty": "intro"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(@tanstack/react-query|@tanstack/query|swr|@apollo/client)$", "strength": 0.9 },
+        { "kind": "callName", "pattern": "(useQuery|useSuspenseQuery|useMutation|useSWR)", "strength": 0.8 }
+      ]
+    },
+    {
+      "id": "concept.cache-invalidation",
+      "name": "Cache invalidation",
+      "category": "caching",
+      "oneLiner": "Deciding when a cached copy stops being trustworthy.",
+      "firstPrinciples": {
+        "problem": "A cache is a copy kept because recomputing is expensive. The source can change at any time, and the copy has no way to know.",
+        "naive": "Cache it and let it expire after a fixed time.",
+        "failure": "The window is always wrong somewhere. Too long and users act on stale data; too short and you barely cache at all. Worse, the staleness is invisible — nothing distinguishes a fresh entry from one that went wrong a second after it was written.",
+        "resolution": "Make writes responsible for invalidating what they affect. The code that changes the data names the cached things now suspect, so freshness is tied to the event that broke it rather than to a clock.",
+        "cost": "Every write must know what it invalidates, and that knowledge lives away from the cache itself. Miss one and you serve stale data indefinitely; over-invalidate and the cache stops paying for itself. There is no way to verify the mapping is complete."
+      },
+      "prerequisites": ["concept.server-state-cache"],
+      "probes": [
+        {
+          "id": "probe.invalidation.scope",
+          "kind": "apply",
+          "question": "Editing one item — invalidate just that item's key, or the whole list?",
+          "answer": "Both, usually. The detail key is now wrong, and the list embeds a copy of the same fields so it is wrong too. Invalidating only the detail leaves a stale row visible in the list, which is the more common bug because the detail view looks correct when you check it.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "callName", "pattern": "(invalidateQueries|revalidatePath|revalidateTag|cache\\.del|\\.expire\\()", "strength": 0.85, "note": "An explicit invalidation call: the write side naming what it just made stale." }
+      ]
+    },
+    {
+      "id": "concept.contract-first-api",
+      "name": "Contract-first API clients",
+      "category": "api-design",
+      "oneLiner": "Generate the client from the server's published schema instead of writing it twice.",
+      "firstPrinciples": {
+        "problem": "Client and server must agree on every endpoint's shape, but they are separate codebases, often separate languages, and nothing connects their two descriptions of the same contract.",
+        "naive": "Write the types on both sides and keep them in step by being careful.",
+        "failure": "They drift. The server renames a field, the frontend still expects the old one, and both compile cleanly — the mismatch surfaces as a runtime error in a browser, usually after deploy.",
+        "resolution": "Treat the server's schema as the single source of truth and generate the client from it. A change on the server becomes a type error in the frontend at build time, which is the earliest point it can possibly be caught.",
+        "cost": "Regeneration is a step someone must run; a stale generated client type-checks perfectly while being wrong. The generated code is also large, unidiomatic, and must be read as build output rather than source."
+      },
+      "prerequisites": [],
+      "probes": [
+        {
+          "id": "probe.contract.stale",
+          "kind": "diagnose",
+          "question": "The backend renamed a response field last week. The frontend compiles with no errors and breaks at runtime. How?",
+          "answer": "The generated client was not regenerated, so the frontend is type-checking against last week's contract. The guarantee is only as fresh as the last generation run — which is why this belongs in CI rather than in a developer's memory.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "path", "pattern": "(\\.gen\\.ts|openapi|generated/)", "strength": 0.7 },
+        { "kind": "dependency", "pattern": "^(@hey-api/openapi-ts|openapi-typescript|swagger-typescript-api)$", "strength": 0.9 }
+      ]
+    },
+    {
+      "id": "concept.dependency-injection",
+      "name": "Dependency injection",
+      "category": "architecture-pattern",
+      "oneLiner": "A function declares what it needs; something else decides how to supply it.",
+      "firstPrinciples": {
+        "problem": "Code needs collaborators — a database session, the current user, a clock. Constructing them inside the function welds it to one specific way of getting them.",
+        "naive": "Build what you need where you need it: open the session, read the global config, call the real clock.",
+        "failure": "The function can no longer be run any other way. Testing it requires a real database and a real clock, so tests get slow and flaky, and swapping the source in one place means editing every call site.",
+        "resolution": "Declare the need as a parameter and let a resolver supply it. The function states what it requires; the wiring decides what satisfies that, and can decide differently in tests.",
+        "cost": "The path from declaration to actual value becomes indirect — you can no longer see what a parameter will be by reading the function. Resolution errors move to startup or request time, and the wiring itself becomes a thing to understand."
+      },
+      "prerequisites": [],
+      "probes": [
+        {
+          "id": "probe.di.testing",
+          "kind": "apply",
+          "question": "A handler takes its database session as an injected parameter. What does that buy a test?",
+          "answer": "The test supplies its own session — a transaction rolled back afterwards, or a fixture database — without touching the handler. The handler never learns it is being tested, which is what makes the test both fast and honest about what it exercises.",
+          "difficulty": "intro"
+        }
+      ],
+      "detect": [
+        { "kind": "callName", "pattern": "(Depends\\(|Annotated\\[|@inject|@Injectable)", "strength": 0.85 },
+        { "kind": "symbolName", "pattern": "(SessionDep|CurrentUser|get_db|get_session)", "strength": 0.8 }
+      ]
+    },
+    {
+      "id": "concept.idempotency",
+      "name": "Idempotency",
+      "category": "distributed-systems",
+      "oneLiner": "Doing it twice has the same effect as doing it once.",
+      "firstPrinciples": {
+        "problem": "Networks fail in the one way that matters: the caller cannot distinguish 'the request never arrived' from 'it succeeded but the response was lost'. Both look identical from outside.",
+        "naive": "Retry on failure. If you did not get a response, send it again.",
+        "failure": "If the first attempt actually succeeded, the retry charges the card a second time. The caller had no way to know, and no amount of care at the call site can fix an ambiguity that exists on the wire.",
+        "resolution": "Make the operation safe to repeat. Either it is naturally so (setting a value) or you make it so with a client-supplied key the server records — a repeat with a known key returns the original result instead of acting again.",
+        "cost": "The server must store used keys, decide how long to remember them, and handle a key reused with different content. That is real state on an operation that looks stateless, and its retention window is a correctness parameter with no obviously right value."
+      },
+      "prerequisites": [],
+      "seeAlso": ["concept.at-least-once-delivery"],
+      "probes": [
+        {
+          "id": "probe.idempotency.methods",
+          "kind": "recall",
+          "question": "Why is PUT considered idempotent while POST is not?",
+          "answer": "PUT states a desired final state — setting a resource to a value twice leaves the same value. POST means 'perform this operation', and performing it twice performs it twice. That is a statement about intended semantics, not a guarantee the framework enforces; a PUT handler that appends is not idempotent no matter what the verb says.",
+          "difficulty": "intro"
+        }
+      ],
+      "detect": [
+        { "kind": "symbolName", "pattern": "(idempotenc|dedup|IdempotencyKey)", "strength": 0.9 },
+        { "kind": "dependency", "pattern": "^(celery|bullmq|rq)$", "strength": 0.4, "note": "Job queues make retries routine, which makes idempotency load-bearing." }
+      ]
+    },
+    {
+      "id": "concept.at-least-once-delivery",
+      "name": "At-least-once delivery",
+      "category": "distributed-systems",
+      "oneLiner": "A queue that guarantees delivery guarantees duplicates.",
+      "firstPrinciples": {
+        "problem": "A worker takes a job and dies mid-way. The queue cannot tell whether the work completed, because the only evidence would have been an acknowledgement that never came.",
+        "naive": "Acknowledge on receipt, so each job is handed out once.",
+        "failure": "Anything the worker had not finished is lost silently, with no record that it was dropped.",
+        "resolution": "Acknowledge only after the work completes. An unacknowledged job is redelivered, so nothing is lost.",
+        "cost": "Jobs that finished but died before acknowledging run again — so delivery is at-least-once, never exactly-once, and every handler must be safe to run twice. 'Exactly-once' as advertised is at-least-once plus deduplication somewhere."
+      },
+      "prerequisites": ["concept.idempotency"],
+      "probes": [
+        {
+          "id": "probe.delivery.exactly-once",
+          "kind": "diagnose",
+          "question": "A vendor advertises exactly-once delivery. What are they actually doing?",
+          "answer": "At-least-once delivery plus deduplication, usually within a bounded window and often only inside their own system. The moment your handler has an outside effect — an email, a charge — the guarantee stops at their boundary and idempotency becomes yours to provide.",
+          "difficulty": "deep"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(celery|bullmq|rq|kombu|kafkajs|amqplib)$", "strength": 0.85 }
+      ]
+    },
+    {
+      "id": "concept.config-as-code",
+      "name": "Typed configuration and the twelve-factor boundary",
+      "category": "deployment",
+      "oneLiner": "Everything that differs between environments comes from the environment, validated at startup.",
+      "firstPrinciples": {
+        "problem": "The same build must run on a laptop, in CI and in production, differing only in hostnames, credentials and flags. Those differences cannot be baked into the image, and they include secrets that must not be in version control.",
+        "naive": "Read environment variables where they are needed, with a sensible fallback if unset.",
+        "failure": "A typo in a variable name silently takes the fallback, and the service starts happily pointed at the wrong database. Because it is read lazily, the failure surfaces on the first request that needs it rather than at boot, and nothing anywhere lists what the service actually requires.",
+        "resolution": "Declare the whole configuration surface as one typed object, parsed and validated at startup. Missing required values stop the process immediately, and the declaration doubles as the documentation of what must be provided.",
+        "cost": "Configuration becomes a schema to maintain, and a strict startup check turns a previously survivable omission into a service that refuses to boot — correct, but it will wake someone up."
+      },
+      "prerequisites": [],
+      "probes": [
+        {
+          "id": "probe.config.fail-fast",
+          "kind": "apply",
+          "question": "Why is crashing at startup on a missing variable better than defaulting?",
+          "answer": "Because the failure lands in the deploy, where it is attributable and reversible, rather than in a request path minutes later where it looks like an unrelated bug. A default that is wrong for production is worse than no default at all — it makes a misconfigured service look healthy.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(pydantic-settings|python-dotenv|dotenv|convict)$", "strength": 0.85 },
+        { "kind": "nodeKind", "pattern": "envVar", "strength": 0.3 }
+      ]
+    },
+    {
+      "id": "concept.client-side-routing",
+      "name": "Client-side routing",
+      "category": "frontend-architecture",
+      "oneLiner": "The URL is application state the browser happens to display.",
+      "firstPrinciples": {
+        "problem": "Users expect the back button, bookmarks and shareable links to work. Those are all URL behaviours, but a single-page app never navigates in the browser's sense.",
+        "naive": "Keep the current screen in a variable and swap components when it changes.",
+        "failure": "The URL never changes, so back exits the app entirely, a bookmark returns to the home screen, and a link cannot point at anything specific. Reloading loses the user's place.",
+        "resolution": "Treat the URL as the source of truth for which view is showing. A router maps paths to components and drives navigation through the history API, so the browser's own controls keep working.",
+        "cost": "Application state now lives in two places that must be kept consistent, and every route must be renderable from a cold URL — no relying on state a previous screen happened to leave behind. The server must also serve the app for every path, or a refresh on a deep link 404s."
+      },
+      "prerequisites": [],
+      "probes": [
+        {
+          "id": "probe.routing.refresh",
+          "kind": "diagnose",
+          "question": "Navigating to /items works, but refreshing on /items returns 404 in production and worked locally. Why?",
+          "answer": "The dev server rewrites unknown paths to index.html; the production server is looking for a file at /items and not finding one. Client-side routing requires the server to serve the app shell for any path, because only the client knows what /items means.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(react-router.*|@tanstack/react-router|vue-router)$", "strength": 0.9 },
+        { "kind": "callName", "pattern": "(createFileRoute|createBrowserRouter|useNavigate)", "strength": 0.8 }
+      ]
+    },
+    {
+      "id": "concept.declarative-ui",
+      "name": "Declarative UI",
+      "category": "frontend-architecture",
+      "oneLiner": "Describe what the screen should look like for the current state; let the framework work out the edits.",
+      "firstPrinciples": {
+        "problem": "The screen must reflect state that changes over time, and the DOM is expensive to rebuild wholesale.",
+        "naive": "When something changes, find the affected elements and update them — set this text, toggle that class, remove that row.",
+        "failure": "The number of transitions grows with the square of the number of states, and every one is hand-written. Miss a path and the screen shows a combination that does not correspond to any real state, which is nearly impossible to reproduce.",
+        "resolution": "Write a function from state to a description of the UI. On change, re-run it and let the framework diff the description against what is displayed, applying the minimum edits.",
+        "cost": "You give up direct control of when DOM writes happen, so performance work becomes about helping the diff (stable keys, memoisation) rather than about writing better DOM code. The mental model — 'it re-runs' — also invites accidentally expensive work in the render path."
+      },
+      "prerequisites": [],
+      "probes": [
+        {
+          "id": "probe.declarative.keys",
+          "kind": "diagnose",
+          "question": "A list rendered with array indices as keys shows the wrong text in inputs after deleting a middle row. Why?",
+          "answer": "The key tells the diff which item an element corresponds to. With indices, deleting the middle row shifts every subsequent item's key, so the framework believes items changed content rather than that one was removed — and reuses element state, including what was typed into inputs, against the wrong items.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(react|vue|svelte|preact|solid-js)$", "strength": 0.9 }
+      ]
+    },
+    {
+      "id": "concept.infrastructure-as-code",
+      "name": "Infrastructure as code",
+      "category": "deployment",
+      "oneLiner": "Describe the infrastructure you want; let a tool make reality match.",
+      "firstPrinciples": {
+        "problem": "Cloud resources are created by people clicking consoles. Nothing records what was done, and no two environments end up the same.",
+        "naive": "Write a runbook describing the clicks.",
+        "failure": "Runbooks go stale the first time someone deviates and does not update them. Nothing detects drift, so staging and production diverge invisibly until something behaves differently in one and not the other — and rebuilding after an outage means following prose under pressure.",
+        "resolution": "Declare the desired resources in files under version control. The tool compares desired state against actual and produces a plan to close the gap, so infrastructure changes get reviewed and replayed like code.",
+        "cost": "The state file becomes critical and contended. Changes made outside the tool cause drift the tool wants to revert, and the abstraction leaks — you still need to understand the underlying cloud primitives, plus the tool's own model of them."
+      },
+      "prerequisites": [],
+      "probes": [
+        {
+          "id": "probe.iac.drift",
+          "kind": "predict",
+          "question": "Someone fixes an outage by changing a security group in the console. What happens at the next deploy?",
+          "answer": "The plan shows the manual change as drift and proposes reverting it, because the files say otherwise. Applied without reading the plan, the fix is undone and the outage returns — which is why 'read the plan' is the discipline that makes IaC safe rather than dangerous.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "path", "pattern": "\\.tf$", "strength": 0.9 },
+        { "kind": "dependency", "pattern": "^(aws-cdk-lib|pulumi)$", "strength": 0.85 }
+      ]
+    },
+    {
+      "id": "concept.declarative-infrastructure",
+      "name": "Reconciliation loops",
+      "category": "deployment",
+      "oneLiner": "State what should be true; a controller works continuously to keep it true.",
+      "firstPrinciples": {
+        "problem": "Servers fail, containers crash, nodes vanish. Anything you set up by issuing commands stops being true the moment reality moves underneath it.",
+        "naive": "Issue commands to reach the desired state — start three copies, point the load balancer at them.",
+        "failure": "Commands describe a moment. When one copy dies, nothing re-issues the command, because the command already succeeded. Recovery requires a human noticing.",
+        "resolution": "Declare the desired state and run a controller that continuously compares it against observed state, acting to close the gap. Failure recovery stops being an event to handle and becomes the loop's ordinary behaviour.",
+        "cost": "Debugging changes shape: you are no longer asking 'did my command work' but 'why does the controller believe this is correct', which means reading its view of the world rather than your own. Fighting the loop by making manual changes never works — it reverts them, correctly."
+      },
+      "prerequisites": ["concept.infrastructure-as-code"],
+      "probes": [
+        {
+          "id": "probe.reconcile.delete",
+          "kind": "predict",
+          "question": "You delete a pod managed by a Deployment. What happens?",
+          "answer": "A replacement appears almost immediately. The Deployment declares how many should exist; observing one fewer, the controller creates another. To actually remove it you change the declaration, not the world — which is the whole model in one interaction.",
+          "difficulty": "intro"
+        }
+      ],
+      "detect": [
+        { "kind": "path", "pattern": "(k8s|kubernetes|helm|manifests)/", "strength": 0.7 }
+      ]
+    },
+    {
+      "id": "concept.static-typing",
+      "name": "Static typing as a design tool",
+      "category": "architecture-pattern",
+      "oneLiner": "Types are less about catching typos than about making invalid states unrepresentable.",
+      "firstPrinciples": {
+        "problem": "Programs have states that should never occur — a user who is both anonymous and has an id, a response that is simultaneously loading and failed. Nothing stops you writing them down.",
+        "naive": "Use optional fields and check at runtime, documenting the rules in comments.",
+        "failure": "Every consumer must remember every rule, and nothing enforces it. The invalid combination eventually gets constructed, and the failure surfaces far from where it was created.",
+        "resolution": "Model the domain so illegal combinations cannot be expressed — discriminated unions instead of a bag of optionals. The compiler then rejects the invalid state at the point of construction.",
+        "cost": "Modelling effort up front, and types that can grow more complex than the logic they guard. Static types also say nothing about data arriving at runtime, which is why the boundary still needs real validation."
+      },
+      "prerequisites": [],
+      "seeAlso": ["concept.boundary-validation"],
+      "probes": [
+        {
+          "id": "probe.types.illegal-states",
+          "kind": "apply",
+          "question": "`{ loading: boolean; data?: T; error?: Error }` — what is wrong with it?",
+          "answer": "It permits eight combinations when only three are meaningful. Loading with both data and an error type-checks fine. A discriminated union — loading, or success with data, or failure with an error — admits exactly the three real states, and the compiler forces every consumer to handle each.",
+          "difficulty": "deep"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(typescript|mypy)$", "strength": 0.8 }
+      ]
+    },
+    {
+      "id": "concept.server-side-rendering",
+      "name": "Server-side rendering",
+      "category": "frontend-architecture",
+      "oneLiner": "Send HTML that already says something, then attach behaviour.",
+      "firstPrinciples": {
+        "problem": "A client-rendered app ships an empty page plus a script. Nothing is visible until the script downloads, parses, runs and fetches — and crawlers may not wait at all.",
+        "naive": "Accept the blank period and show a spinner.",
+        "failure": "First contentful paint is gated behind the whole chain. On a slow connection or a cheap phone that is seconds of blank screen, and link previews and search crawlers see an empty document.",
+        "resolution": "Render the initial HTML on the server so the first response already contains content, then hydrate it in the browser to attach interactivity.",
+        "cost": "The same components must run in two environments, so anything assuming `window` breaks. You now operate a server that renders, and hydration mismatches — server and client disagreeing on output — are a failure mode that does not exist in a purely client-rendered app."
+      },
+      "prerequisites": ["concept.declarative-ui"],
+      "probes": [
+        {
+          "id": "probe.ssr.hydration",
+          "kind": "diagnose",
+          "question": "A component rendering `new Date().toLocaleTimeString()` logs a hydration mismatch. Why?",
+          "answer": "The server rendered one time, the client rendered a later one, and the two HTML strings disagree. Hydration expects the client's first render to reproduce the server's output exactly; anything non-deterministic across the two — time, randomness, locale, window size — breaks that assumption.",
+          "difficulty": "working"
+        }
+      ],
+      "detect": [
+        { "kind": "dependency", "pattern": "^(next|nuxt|remix|@remix-run/.*)$", "strength": 0.9 }
+      ]
+    }
+  ]
+}
