@@ -442,6 +442,42 @@
       ]
     },
     {
+      "id": "concept.continuous-integration",
+      "name": "Continuous integration",
+      "subject": "pattern",
+      "category": "deployment",
+      "oneLiner": "Move the checklist into a machine that runs it identically on every change.",
+      "firstPrinciples": {
+        "problem": "Code that works on the machine that wrote it says nothing about whether it works anywhere else, and the gap is discovered by someone else, later, usually at the worst time.",
+        "naive": "Keep a checklist: run the tests, build, upload. Discipline instead of machinery.",
+        "failure": "Checklists are executed by people under time pressure. Steps get skipped, environments differ, and nothing records what was actually run against which commit — so 'works on my machine' becomes a class of outage rather than a joke.",
+        "resolution": "Run the checklist automatically on every change, from a clean environment, with a durable record of the result attached to the commit that caused it.",
+        "cost": "A second environment to maintain and debug, feedback in minutes rather than seconds, and an entirely new failure class where the pipeline is broken while the code is fine. On hosted runners your ability to ship also becomes a dependency on someone else's availability."
+      },
+      "prerequisites": [],
+      "seeAlso": ["concept.infrastructure-as-code"],
+      "probes": [
+        {
+          "id": "probe.ci.gating",
+          "kind": "diagnose",
+          "question": "A deploy job is written below the test job in the workflow file. Does that mean deploys only happen when tests pass?",
+          "answer": "No. File order means nothing; without `needs:` the jobs run in parallel and a deploy can ship code whose tests are still running — or already failing. Gating is `needs:`, plus branch protection or an environment rule for anything a person could bypass.",
+          "difficulty": "working"
+        },
+        {
+          "id": "probe.ci.pinning",
+          "kind": "apply",
+          "question": "Why might pinning a third-party action to a commit SHA rather than `@v4` be worth the maintenance cost?",
+          "answer": "A tag is a movable pointer the action's owner controls. Repointing it — or compromising that account — runs different code inside your pipeline, with your workflow's permissions and secrets. A SHA cannot be repointed. The cost is that updates become manual, which is why this is usually reserved for workflows holding deploy credentials.",
+          "difficulty": "deep"
+        }
+      ],
+      "detect": [
+        { "kind": "path", "pattern": "\\.github/workflows/", "strength": 0.9, "note": "Workflow definitions are present." },
+        { "kind": "nodeKind", "pattern": "^job$", "strength": 0.5 }
+      ]
+    },
+    {
       "id": "concept.infrastructure-as-code",
       "name": "Infrastructure as code",
       "category": "deployment",

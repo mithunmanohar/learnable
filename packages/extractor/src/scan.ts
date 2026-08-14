@@ -8,6 +8,8 @@ import { extractManifests } from "./extractors/manifests.js";
 import { extractPython } from "./extractors/python.js";
 import { extractTypeScript } from "./extractors/typescript.js";
 import { extractInfra } from "./extractors/infra.js";
+import { extractTerraform } from "./extractors/terraform.js";
+import { extractGitHubActions } from "./extractors/githubActions.js";
 import { synthesiseTraces } from "./synth/traces.js";
 import { bindConcepts } from "./concepts/bind.js";
 import { deriveDecisions } from "./synth/decisions.js";
@@ -47,6 +49,8 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Kno
   await extractPython(kb, root, files, services);
   await extractTypeScript(kb, root, files, services);
   extractInfra(kb, root, files);
+  extractTerraform(kb, files);
+  extractGitHubActions(kb, files);
 
   synthesiseTraces(kb);
   deriveDecisions(kb);

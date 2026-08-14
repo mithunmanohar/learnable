@@ -17,9 +17,10 @@ const EXTRACTOR = "infra@0.1.0";
 export function extractInfra(kb: KBBuilder, root: string, files: WalkedFile[]): void {
   for (const file of files) {
     const base = path.posix.basename(file.path);
+    // Terraform and GitHub Actions have their own extractors; this handles the
+    // container and Kubernetes surfaces.
     if (/^(docker-)?compose(\.[\w-]+)?\.ya?ml$/.test(base)) extractCompose(kb, file);
     else if (base === "Dockerfile" || /\.dockerfile$/i.test(base)) extractDockerfile(kb, file);
-    else if (file.path.endsWith(".tf")) extractTerraform(kb, file);
     else if (/\.ya?ml$/.test(base) && !file.path.includes(".github/")) extractKubernetes(kb, file);
   }
 }
@@ -177,47 +178,6 @@ function extractDockerfile(kb: KBBuilder, file: WalkedFile): void {
       : `Container image based on \`${baseImage}\`.`,
     attrs: { provider: "docker", resourceType: "image", baseImage, stages, ports: exposed },
     provenance: { method: "extracted", extractor: EXTRACTOR, evidence: [ref] },
-  });
-}
-
-/* ---------- Terraform ---------- */
-
-/**
- * Block-level extraction only. Terraform's value language (interpolation,
- * locals, modules) is not evaluated, so attribute values are deliberately not
- * reported rather than reported wrongly.
- */
-function extractTerraform(kb: KBBuilder, file: WalkedFile): void {
-  const raw = readFileSafe(file.absPath);
-  if (!raw) return;
-  const lines = raw.split("\n");
-
-  lines.forEach((line, i) => {
-    const m = /^\s*resource\s+"([^"]+)"\s+"([^"]+)"\s*\{/.exec(line);
-    if (!m?.[1] || !m[2]) return;
-    const [, resourceType, name] = m;
-    const provider = resourceType.split("_")[0] ?? "terraform";
-    const ref: SourceRef = { file: file.path, startLine: i + 1, excerpt: line.trim() };
-
-    kb.addNode({
-      id: ids.infra(provider, `${resourceType}.${name}`),
-      kind: "infraResource",
-      name: `${resourceType}.${name}`,
-      layer: "infra",
-      location: ref,
-      summary: `Terraform-managed ${resourceType}.`,
-      attrs: { provider, resourceType, iac: "terraform" },
-      provenance: { method: "extracted", extractor: EXTRACTOR, evidence: [ref] },
-    });
-
-    kb.addStackItem({
-      id: "stack:terraform",
-      name: "Terraform",
-      category: "iac",
-      role: "Declares cloud infrastructure as version-controlled configuration.",
-      conceptIds: ["concept.infrastructure-as-code"],
-      provenance: { method: "extracted", extractor: EXTRACTOR, evidence: [ref] },
-    });
   });
 }
 

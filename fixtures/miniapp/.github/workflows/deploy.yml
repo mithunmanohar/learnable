@@ -1,0 +1,50 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a moving tag: the owner can repoint v4 at any time.
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run pytest
+        run: pytest backend/
+
+  build:
+    name: Build image
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a commit: the extractor should treat this one as pinned.
+      - name: Checkout
+        uses: actions/checkout@a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4
+      - name: Build
+        run: docker build -t miniapp backend/
+
+  deploy:
+    name: Deploy to production
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.DEPLOY_ROLE_ARN }}
+      - name: Apply
+        run: terraform -chdir=infra apply -auto-approve
