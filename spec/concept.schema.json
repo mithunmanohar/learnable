@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://learnable.dev/spec/concept.schema.json",
+  "title": "Learnable Concept Catalog",
+  "description": "Repo-independent, transferable engineering concepts. Deliberately separate from any knowledge base: a KB describes one system and is discarded when that system is, whereas the concept catalog accumulates across every repo you ever scan. This file is the durable artifact.",
+  "type": "object",
+  "required": ["catalogVersion", "concepts"],
+  "additionalProperties": false,
+  "properties": {
+    "catalogVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "concepts": { "type": "array", "items": { "$ref": "#/$defs/Concept" } }
+  },
+
+  "$defs": {
+    "Concept": {
+      "type": "object",
+      "required": ["id", "name", "category", "oneLiner", "firstPrinciples"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^concept\\.[a-z0-9-]+$" },
+        "name": { "type": "string" },
+        "subject": {
+          "enum": ["pattern", "technology"],
+          "default": "pattern",
+          "description": "`pattern` is a technique (idempotency, optimistic locking). `technology` is a product or service (EKS, Terraform remote state, GitHub Actions). Both use the same derivation, and that is the point: a technology explained from first principles transfers to its competitors, because what you learned was the trade-off rather than the product."
+        },
+        "category": {
+          "enum": [
+            "data-modelling", "persistence", "api-design", "auth", "security",
+            "concurrency", "distributed-systems", "performance", "caching",
+            "frontend-architecture", "state-management", "testing",
+            "deployment", "observability", "architecture-pattern"
+          ]
+        },
+        "oneLiner": { "type": "string", "maxLength": 200 },
+
+        "firstPrinciples": {
+          "type": "object",
+          "description": "The derivation, not the definition. A definition tells you what a thing is called; this tells you why it had to exist, which is the part that transfers to systems you have not seen yet.",
+          "required": ["problem", "naive", "failure", "resolution", "cost"],
+          "additionalProperties": false,
+          "properties": {
+            "problem": { "type": "string", "description": "The constraint in the world that forces the issue. No jargon allowed here." },
+            "naive": { "type": "string", "description": "What you would obviously try first, and why it is reasonable." },
+            "failure": { "type": "string", "description": "The specific scenario where the naive approach breaks. Concrete, not abstract." },
+            "resolution": { "type": "string", "description": "The technique, derived as a response to that failure." },
+            "cost": { "type": "string", "description": "What you gave up to get it. Every technique has one; a concept taught without its cost produces cargo-culting." }
+          }
+        },
+
+        "prerequisites": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Concept ids that should be understood first. Forms the learning DAG."
+        },
+        "seeAlso": { "type": "array", "items": { "type": "string" } },
+
+        "probes": {
+          "type": "array",
+          "description": "Active-recall prompts. Reading generates familiarity; answering generates knowledge.",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "question", "answer"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "kind": {
+                "enum": ["predict", "recall", "apply", "diagnose"],
+                "description": "predict = asked BEFORE the code is revealed, so being wrong is the teaching moment. recall = retrieve a known fact. apply = transfer to a new situation. diagnose = spot what breaks."
+              },
+              "question": { "type": "string" },
+              "answer": { "type": "string" },
+              "difficulty": { "enum": ["intro", "working", "deep"] }
+            }
+          }
+        },
+
+        "detect": {
+          "type": "array",
+          "description": "Rules that bind this concept to real code during a scan. This is what turns a static glossary into something anchored in your own repos.",
+          "items": { "$ref": "#/$defs/DetectionRule" }
+        }
+      }
+    },
+
+    "DetectionRule": {
+      "type": "object",
+      "required": ["kind", "pattern"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["dependency", "import", "symbolName", "callName", "decorator", "attr", "path", "nodeKind"],
+          "description": "What to match against. Each maps to a field the extractors already populate."
+        },
+        "pattern": { "type": "string", "description": "Regular expression, matched case-insensitively." },
+        "languages": { "type": "array", "items": { "type": "string" } },
+        "strength": { "type": "number", "minimum": 0, "maximum": 1 },
+        "note": { "type": "string", "description": "Copied onto the binding to explain what the match means." }
+      }
+    }
+  }
+}

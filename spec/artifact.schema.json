@@ -1,0 +1,431 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://learnable.dev/spec/artifact.schema.json",
+  "title": "Learnable Learning Artifact",
+  "description": "Layers 3 and 4 of the framework: the design understanding and the curriculum built on top of it. Produced by a contract-driven language model that must cite the knowledge base (kb.schema.json) or the source for every claim it makes. This is the document the viewer renders.",
+  "type": "object",
+  "required": ["artifactVersion", "generatedAt", "generator", "subject", "orientation", "lenses"],
+  "additionalProperties": false,
+  "properties": {
+    "artifactVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "generator": {
+      "type": "object",
+      "required": ["model", "contracts"],
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string", "description": "Model identifier that produced this artifact." },
+        "contracts": {
+          "type": "array",
+          "description": "Contract ids and versions applied, e.g. 'lens.terraform@0.1.0'. Reproducibility depends on recording these.",
+          "items": { "type": "string" }
+        },
+        "kbVersion": { "type": "string" }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "required": ["repoName"],
+      "additionalProperties": false,
+      "properties": {
+        "repoName": { "type": "string" },
+        "commit": { "type": "string" },
+        "kbGeneratedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "orientation": { "$ref": "#/$defs/Orientation" },
+    "lenses": { "type": "array", "items": { "$ref": "#/$defs/Lens" } },
+    "curriculum": { "$ref": "#/$defs/Curriculum" },
+    "invariants": { "type": "array", "items": { "$ref": "#/$defs/Invariant" } },
+    "failureModes": { "type": "array", "items": { "$ref": "#/$defs/FailureMode" } },
+    "openQuestions": {
+      "type": "array",
+      "description": "Things the analyst could not establish from the evidence available. Required, not optional: a claim that cannot be cited belongs here rather than in the narrative.",
+      "items": { "$ref": "#/$defs/OpenQuestion" }
+    },
+    "diagnostics": { "type": "array", "items": { "$ref": "#/$defs/Diagnostic" } }
+  },
+
+  "$defs": {
+    "SourceRef": {
+      "type": "object",
+      "required": ["file", "startLine"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "startLine": { "type": "integer", "minimum": 1 },
+        "endLine": { "type": "integer", "minimum": 1 },
+        "excerpt": { "type": "string", "maxLength": 2000 }
+      }
+    },
+
+    "Evidence": {
+      "type": "object",
+      "description": "What a claim rests on. Either a node in the knowledge base or a location in the source, and normally both.",
+      "additionalProperties": false,
+      "properties": {
+        "nodeIds": {
+          "type": "array",
+          "description": "Node ids from kb.json. These are checkable: the linter rejects ids that do not exist.",
+          "items": { "type": "string" }
+        },
+        "sourceRefs": { "type": "array", "items": { "$ref": "#/$defs/SourceRef" } },
+        "traceIds": { "type": "array", "items": { "type": "string" } },
+        "documents": {
+          "type": "array",
+          "description": "Repository prose the claim draws on (README, ADRs, runbooks).",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "Provenance": {
+      "type": "object",
+      "required": ["method", "contract"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "enum": ["extracted", "inferred", "authored"],
+          "description": "Almost everything in this document is `inferred` — it is a model's reading of the system. `extracted` is reserved for values copied verbatim from the knowledge base."
+        },
+        "contract": { "type": "string", "description": "Contract id and version that produced this, e.g. 'lens.eks@0.1.0'." },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence": { "$ref": "#/$defs/Evidence" },
+        "note": { "type": "string" }
+      }
+    },
+
+    "Orientation": {
+      "type": "object",
+      "description": "Lesson 1 material: what this system is for, established before any structure is described.",
+      "required": ["problem", "summary", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "problem": { "type": "string", "description": "The problem the system solves, in terms a non-user of it would follow. No component names." },
+        "users": { "type": "array", "items": { "type": "string" } },
+        "summary": { "type": "string", "description": "One paragraph. What it is, at the altitude of a whiteboard sketch." },
+        "notInScope": {
+          "type": "array",
+          "description": "What the system deliberately does not do. Frequently more clarifying than what it does.",
+          "items": { "type": "string" }
+        },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "LensDomain": {
+      "enum": [
+        "ci-cd", "iac", "runtime-platform", "network", "security",
+        "data", "api", "frontend", "backend", "observability",
+        "messaging", "testing", "cost"
+      ]
+    },
+
+    "Lens": {
+      "type": "object",
+      "description": "One cross-section of the system, at its own level of abstraction. Lenses are viewpoints, not directories.",
+      "required": ["id", "name", "domain", "question", "summary", "sections", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "domain": { "$ref": "#/$defs/LensDomain" },
+        "question": {
+          "type": "string",
+          "description": "The question this cross-section exists to answer, phrased as a question."
+        },
+        "summary": { "type": "string" },
+        "order": { "type": "integer", "description": "Suggested reading order across lenses." },
+        "conceptIds": {
+          "type": "array",
+          "description": "Catalog concepts a reader needs for this lens. Drives prerequisite ordering in the curriculum.",
+          "items": { "type": "string" }
+        },
+        "sections": { "$ref": "#/$defs/SectionList" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "SectionList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Section" }
+    },
+
+    "Section": {
+      "type": "object",
+      "description": "A unit of explanation. Recursive and lazily generated: children may be present, or may be stubs naming the contract that would produce them.",
+      "required": ["id", "title", "kind", "depth", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "kind": {
+          "enum": [
+            "first-principles", "explanation", "walkthrough", "pattern",
+            "topology", "config-anatomy", "comparison", "failure-analysis",
+            "invariant", "trade-off"
+          ],
+          "description": "Drives which viewer component renders it. `first-principles` carries a derivation; `config-anatomy` carries annotated source; `topology` carries a diagram."
+        },
+        "depth": {
+          "enum": ["overview", "working", "deep"],
+          "description": "Reading level. A lens opens at `overview`; deeper levels exist behind expansion."
+        },
+        "body": {
+          "type": "string",
+          "description": "Markdown. Absent when the section is an ungenerated stub."
+        },
+        "firstPrinciples": {
+          "$ref": "#/$defs/FirstPrinciples",
+          "description": "Required when kind is `first-principles`."
+        },
+        "annotatedSource": {
+          "$ref": "#/$defs/AnnotatedSource",
+          "description": "Required when kind is `config-anatomy`. The mechanism for teaching a workflow or manifest file, where the file itself is the subject."
+        },
+        "diagram": { "$ref": "#/$defs/Diagram" },
+        "conceptIds": { "type": "array", "items": { "type": "string" } },
+        "children": { "$ref": "#/$defs/SectionList" },
+        "expansion": {
+          "$ref": "#/$defs/Expansion",
+          "description": "Present when this section can be drilled into further. Its presence is what the viewer renders as an expand affordance."
+        },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "Expansion": {
+      "type": "object",
+      "description": "How to generate this section's next level of detail, on demand. Generation cost stays proportional to what is actually read.",
+      "required": ["contractId", "generated"],
+      "additionalProperties": false,
+      "properties": {
+        "contractId": { "type": "string", "description": "Contract to run, e.g. 'lens.terraform@0.1.0#deep'." },
+        "generated": { "type": "boolean", "description": "false means children are not yet produced; the viewer shows an expand affordance." },
+        "focus": { "type": "string", "description": "What the expansion should concentrate on." },
+        "scopeNodeIds": { "type": "array", "items": { "type": "string" } },
+        "scopeFiles": { "type": "array", "items": { "type": "string" } },
+        "estimatedChildren": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "FirstPrinciples": {
+      "type": "object",
+      "description": "The same derivation shape the concept catalog uses, applied inline to this system's specific instance of a pattern or technology.",
+      "required": ["problem", "naive", "failure", "resolution", "cost"],
+      "additionalProperties": false,
+      "properties": {
+        "subject": { "type": "string", "description": "What is being derived, e.g. 'EKS managed control plane'." },
+        "problem": { "type": "string" },
+        "naive": { "type": "string" },
+        "failure": { "type": "string" },
+        "resolution": { "type": "string" },
+        "cost": { "type": "string", "description": "Mandatory. A technology taught without its cost produces cargo-culting." },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["option"],
+            "additionalProperties": false,
+            "properties": {
+              "option": { "type": "string" },
+              "whenBetter": { "type": "string", "description": "The conditions under which the alternative is the better choice. Without this the comparison is an endorsement." }
+            }
+          }
+        },
+        "conceptId": { "type": "string", "description": "Catalog concept this instantiates, when one exists." }
+      }
+    },
+
+    "AnnotatedSource": {
+      "type": "object",
+      "description": "A source file with line-range explanations. How config-heavy domains are taught, because the file is the thing being learned.",
+      "required": ["file", "annotations"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "language": { "type": "string" },
+        "summary": { "type": "string" },
+        "annotations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["startLine", "title", "explanation"],
+            "additionalProperties": false,
+            "properties": {
+              "startLine": { "type": "integer", "minimum": 1 },
+              "endLine": { "type": "integer", "minimum": 1 },
+              "title": { "type": "string" },
+              "explanation": { "type": "string", "description": "What this span accomplishes and why it is needed — not a restatement of what it says." },
+              "importance": { "enum": ["critical", "notable", "routine"] },
+              "conceptIds": { "type": "array", "items": { "type": "string" } },
+              "gotcha": { "type": "string", "description": "The mistake commonly made here." }
+            }
+          }
+        }
+      }
+    },
+
+    "Diagram": {
+      "type": "object",
+      "description": "Structured diagram data. Kept as data rather than an image so the viewer can render it responsively and in either theme.",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["flow", "topology", "sequence", "layered", "state"] },
+        "mermaid": { "type": "string", "description": "Mermaid source, rendered natively by the viewer." },
+        "caption": { "type": "string" },
+        "nodeIds": { "type": "array", "items": { "type": "string" }, "description": "KB nodes depicted, so diagram elements can link to evidence." }
+      }
+    },
+
+    "Curriculum": {
+      "type": "object",
+      "description": "Layer 4. An ordered path through the system, built on the lenses.",
+      "required": ["spine", "lessons"],
+      "additionalProperties": false,
+      "properties": {
+        "spine": {
+          "type": "string",
+          "description": "Identifier of the lesson spine used, e.g. 'default@0.1.0'."
+        },
+        "estimatedMinutes": { "type": "integer", "minimum": 0 },
+        "lessons": { "type": "array", "items": { "$ref": "#/$defs/Lesson" } }
+      }
+    },
+
+    "LessonIntent": {
+      "enum": [
+        "purpose", "structure", "boundaries", "behavior",
+        "failure", "technology-choice", "invariants", "implementation"
+      ],
+      "description": "The default spine's eight intents, in order. `implementation` is deliberately last."
+    },
+
+    "Lesson": {
+      "type": "object",
+      "required": ["id", "order", "intent", "question", "narrative", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "order": { "type": "integer", "minimum": 1 },
+        "intent": { "$ref": "#/$defs/LessonIntent" },
+        "question": {
+          "type": "string",
+          "description": "The lesson IS a question. A lesson titled with a topic gets skimmed; a lesson titled with a question gets answered."
+        },
+        "prerequisiteConceptIds": {
+          "type": "array",
+          "description": "Catalog concepts assumed. The viewer offers these first if the reader has not met them.",
+          "items": { "type": "string" }
+        },
+        "predictProbe": {
+          "$ref": "#/$defs/Probe",
+          "description": "Asked BEFORE any of the reveal is shown. Committing a wrong answer is the mechanism by which the lesson is acquired, and it is unavailable to a reader who saw the answer first."
+        },
+        "narrative": { "type": "string", "description": "Markdown. The explanation, shown after the prediction is committed." },
+        "reveal": {
+          "type": "object",
+          "description": "What the viewer discloses once the reader has answered.",
+          "additionalProperties": false,
+          "properties": {
+            "lensId": { "type": "string" },
+            "sectionIds": { "type": "array", "items": { "type": "string" } },
+            "traceIds": { "type": "array", "items": { "type": "string" } },
+            "nodeIds": { "type": "array", "items": { "type": "string" } },
+            "sourceRefs": { "type": "array", "items": { "$ref": "#/$defs/SourceRef" } }
+          }
+        },
+        "masteryChecks": { "type": "array", "items": { "$ref": "#/$defs/Probe" } },
+        "estimatedMinutes": { "type": "integer", "minimum": 0 },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "Probe": {
+      "type": "object",
+      "required": ["id", "kind", "question", "answer"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "enum": ["predict", "recall", "apply", "diagnose"] },
+        "question": { "type": "string" },
+        "answer": { "type": "string" },
+        "commonWrongAnswer": {
+          "type": "string",
+          "description": "The plausible mistake, and why it is wrong. Naming it is often more instructive than the correct answer alone."
+        },
+        "difficulty": { "enum": ["intro", "working", "deep"] },
+        "evidence": { "$ref": "#/$defs/Evidence" }
+      }
+    },
+
+    "Invariant": {
+      "type": "object",
+      "description": "Something that must always hold. Layer 3 content, and the part most likely to be violated by a future change made without understanding.",
+      "required": ["id", "statement", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "statement": { "type": "string", "description": "Stated positively: what must remain true." },
+        "whyItHolds": { "type": "string", "description": "The mechanism currently enforcing it — a constraint, a type, a check, or merely a convention." },
+        "enforcement": {
+          "enum": ["type-system", "database-constraint", "runtime-check", "test", "convention", "unenforced"],
+          "description": "`convention` and `unenforced` are the interesting values: they mark invariants nothing would stop you breaking."
+        },
+        "ifViolated": { "type": "string", "description": "The concrete consequence." },
+        "conceptIds": { "type": "array", "items": { "type": "string" } },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "FailureMode": {
+      "type": "object",
+      "description": "Lesson 5 material: what happens when a specific component fails.",
+      "required": ["id", "component", "failure", "effect", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "component": { "type": "string" },
+        "componentNodeId": { "type": "string" },
+        "failure": { "type": "string", "description": "The failure, specifically: unreachable, slow, returning errors, out of disk." },
+        "effect": { "type": "string", "description": "What a user observes, not what a log says." },
+        "blastRadius": { "enum": ["contained", "degraded", "total-outage", "data-loss", "unknown"] },
+        "handling": { "type": "string", "description": "What the system currently does about it, including 'nothing'." },
+        "gap": { "type": "string", "description": "What is not handled and would need to be." },
+        "conceptIds": { "type": "array", "items": { "type": "string" } },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "OpenQuestion": {
+      "type": "object",
+      "description": "Something the analyst could not determine. Emitting these is mandatory: it is where a claim goes when it cannot be cited, and it is what keeps the narrative trustworthy.",
+      "required": ["question", "whyUnresolved"],
+      "additionalProperties": false,
+      "properties": {
+        "question": { "type": "string" },
+        "whyUnresolved": {
+          "enum": [
+            "not-in-repository", "requires-runtime-observation", "requires-human-context",
+            "ambiguous-evidence", "outside-scanned-scope"
+          ]
+        },
+        "wouldResolveIf": { "type": "string", "description": "What would answer it — the file, the person, or the measurement needed." },
+        "affectsLensIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "Diagnostic": {
+      "type": "object",
+      "required": ["level", "contract", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "level": { "enum": ["info", "gap", "warn", "error"] },
+        "contract": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}

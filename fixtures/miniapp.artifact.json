@@ -1,0 +1,357 @@
+{
+  "artifactVersion": "0.1.0",
+  "generatedAt": "2026-08-14T00:00:00Z",
+  "generator": {
+    "model": "claude-opus-5",
+    "contracts": ["orientation@0.1.0", "lens@0.1.0", "curriculum@0.1.0"],
+    "kbVersion": "0.1.0"
+  },
+  "subject": {
+    "repoName": "miniapp",
+    "kbGeneratedAt": "2026-08-14T00:00:00Z"
+  },
+
+  "orientation": {
+    "problem": "People accumulate short pieces of written information that they need to keep, retrieve later, and eventually discard. Holding these in memory or in scattered files means they are lost, duplicated, or unreachable from wherever the person happens to be.",
+    "users": ["A signed-in individual keeping their own notes"],
+    "summary": "A small two-tier application. A browser interface lists notes and creates new ones; a server holds them in a relational database and decides who may see what. The two halves are separate programs in separate languages that agree on one HTTP contract, generated from the server's schema so the agreement cannot silently drift.",
+    "notInScope": [
+      "Sharing or collaboration — every note belongs to one caller and there is no concept of another person seeing it",
+      "Search, tagging or organisation beyond a flat list",
+      "Any background or scheduled work; every action is a direct response to a request"
+    ],
+    "provenance": {
+      "method": "inferred",
+      "contract": "orientation@0.1.0",
+      "confidence": 0.85,
+      "evidence": {
+        "nodeIds": ["route:GET /api/v1/notes/", "dataModel:backend/app/models.py#Note"],
+        "sourceRefs": [{ "file": "backend/app/models.py", "startLine": 6 }]
+      },
+      "note": "Purpose derived from the data model and route surface; no product documentation exists in the repository to corroborate it."
+    }
+  },
+
+  "lenses": [
+    {
+      "id": "lens.api",
+      "name": "The API boundary",
+      "domain": "api",
+      "order": 1,
+      "question": "What can a caller ask this system to do, and what stops them asking for more?",
+      "summary": "Three HTTP endpoints over one resource. The interesting part is not the endpoints but the type boundary in front of them: what arrives is parsed into a declared shape before any application code runs, and what leaves is projected onto a different declared shape.",
+      "conceptIds": ["concept.boundary-validation", "concept.dto-projection", "concept.contract-first-api"],
+      "sections": [
+        {
+          "id": "sec.api.first-principles",
+          "title": "Why a system validates at its edge",
+          "kind": "first-principles",
+          "depth": "overview",
+          "firstPrinciples": {
+            "subject": "Validation at the trust boundary",
+            "problem": "Input arriving over a network is arbitrary bytes. Nothing about it is guaranteed — not the fields, not the types, not the ranges — yet the code receiving it is written as though it were well-formed.",
+            "naive": "Check things where you use them: confirm the title is present just before saving it, confirm the length just before displaying it. This is reasonable and it is what most code does first.",
+            "failure": "The checks scatter and then disagree. One path checks, another forgot, a third checks differently. Worse, you cannot look at a function and know what it is entitled to assume, so functions either re-check defensively or trust wrongly — and which of those happened is invisible at the call site.",
+            "resolution": "Validate once, at the boundary, and produce a different type on success. Not a checked dictionary but an object that can only exist if validation passed, so the type system carries the guarantee inward for free.",
+            "cost": "Every shape crossing the boundary needs a declared schema, kept in step with what the shape means. Validation also becomes a place where legitimate but unanticipated input is rejected, which is its own class of bug and one that looks like the client's fault.",
+            "conceptId": "concept.boundary-validation"
+          },
+          "conceptIds": ["concept.boundary-validation"],
+          "provenance": {
+            "method": "inferred",
+            "contract": "lens@0.1.0",
+            "confidence": 0.9,
+            "evidence": {},
+            "note": "General engineering knowledge; makes no claim about this repository."
+          }
+        },
+        {
+          "id": "sec.api.here",
+          "title": "How this system does it",
+          "kind": "explanation",
+          "depth": "overview",
+          "body": "Each endpoint declares the type it accepts and the type it returns. `POST /api/v1/notes/` takes a `NoteCreate` and returns a `NotePublic`; the handler never sees an unvalidated request body, because the framework refuses the request before the handler is entered.\n\nThe shapes are deliberately not the table. `Note`, `NoteCreate` and `NotePublic` share a base class carrying `title` and `body`, but `Note` alone adds `internal_score`. Because `NotePublic` has no field for it, that column cannot be serialised into a response — the omission is structural rather than something a reviewer has to catch.\n\nThe frontend does not restate any of these types. They are generated from the server's schema into `frontend/src/client/types.gen.ts`, so a change on the server surfaces as a compile error rather than a runtime surprise.",
+          "conceptIds": ["concept.dto-projection", "concept.contract-first-api"],
+          "expansion": {
+            "contractId": "lens@0.1.0#deep",
+            "generated": false,
+            "focus": "Field-by-field comparison of Note, NoteCreate and NotePublic, and what each omission is protecting",
+            "scopeFiles": ["backend/app/models.py"]
+          },
+          "provenance": {
+            "method": "inferred",
+            "contract": "lens@0.1.0",
+            "confidence": 0.95,
+            "evidence": {
+              "nodeIds": [
+                "route:POST /api/v1/notes/",
+                "dataModel:backend/app/models.py#Note",
+                "dataModel:backend/app/models.py#NotePublic"
+              ],
+              "sourceRefs": [
+                { "file": "backend/app/models.py", "startLine": 22, "endLine": 28 },
+                { "file": "backend/app/api/routes/notes.py", "startLine": 23 }
+              ]
+            }
+          }
+        },
+        {
+          "id": "sec.api.invariant",
+          "title": "What must stay true here",
+          "kind": "invariant",
+          "depth": "overview",
+          "body": "Columns on the table that are absent from the public shape must stay absent. Nothing enforces this beyond the shape of the types: adding `internal_score` to `NotePublic` would publish it immediately, and no test would fail.",
+          "provenance": {
+            "method": "inferred",
+            "contract": "lens@0.1.0",
+            "confidence": 0.9,
+            "evidence": {
+              "sourceRefs": [{ "file": "backend/app/models.py", "startLine": 26, "endLine": 28 }]
+            }
+          }
+        }
+      ],
+      "provenance": {
+        "method": "inferred",
+        "contract": "lens@0.1.0",
+        "confidence": 0.9,
+        "evidence": { "nodeIds": ["route:GET /api/v1/notes/", "route:POST /api/v1/notes/"] }
+      }
+    },
+
+    {
+      "id": "lens.frontend",
+      "name": "Client state",
+      "domain": "frontend",
+      "order": 2,
+      "question": "The browser holds a copy of data it does not own — how does it know when that copy went wrong?",
+      "summary": "Fetched data lives in a cache outside the component tree, keyed by query key. Freshness is not a timer but an explicit act: the code that writes has to name what it just invalidated.",
+      "conceptIds": ["concept.server-state-cache", "concept.cache-invalidation"],
+      "sections": [
+        {
+          "id": "sec.fe.first-principles",
+          "title": "Why remote data is a cache, not state",
+          "kind": "first-principles",
+          "depth": "overview",
+          "firstPrinciples": {
+            "subject": "Server state as a cache",
+            "problem": "Data on the server is owned by the server and can change without telling the browser. The browser only ever holds a copy that was true at the moment it was fetched.",
+            "naive": "Fetch in the component and put the result in local state, right where it is used.",
+            "failure": "Two components needing the same data fetch it twice and drift apart. Every component hand-rolls its own loading and error branches. Nothing knows when a copy went stale, so a user sees old data after making a change — and the blunt fix, refetching everything, discards the copies that were still good.",
+            "resolution": "Keep remote data in a cache outside the component tree, keyed by what identifies the request. Components read by key; the cache handles deduplication, loading state and refetching. Staleness becomes an explicit operation.",
+            "cost": "A second source of truth to reason about, and correctness now depends on invalidating the right keys at the right moments. Forgetting produces the classic 'I added a row and the list did not update'; over-invalidating throws away the benefit the cache was for.",
+            "conceptId": "concept.server-state-cache"
+          },
+          "conceptIds": ["concept.server-state-cache"],
+          "provenance": {
+            "method": "inferred",
+            "contract": "lens@0.1.0",
+            "confidence": 0.9,
+            "evidence": {},
+            "note": "General engineering knowledge; makes no claim about this repository."
+          }
+        },
+        {
+          "id": "sec.fe.here",
+          "title": "The invalidation in this app",
+          "kind": "walkthrough",
+          "depth": "overview",
+          "body": "`NotesPage` reads the list through a suspending query under the key `[\"notes\"]`, so it never renders a half-loaded state — it suspends and an enclosing boundary supplies the fallback.\n\n`AddNote` writes through a mutation. On success it invalidates `[\"notes\"]`, and that single line is what makes the new note appear. Remove it and the POST still succeeds, the server still has the note, and the list still shows the old rows — a bug that looks like the server failing when it is entirely a client-side cache decision.",
+          "conceptIds": ["concept.cache-invalidation"],
+          "expansion": {
+            "contractId": "lens@0.1.0#deep",
+            "generated": false,
+            "focus": "Query key design, and why invalidating a detail key without the list key leaves a stale row visible",
+            "scopeFiles": ["frontend/src/routes/notes.tsx"]
+          },
+          "provenance": {
+            "method": "inferred",
+            "contract": "lens@0.1.0",
+            "confidence": 0.95,
+            "evidence": {
+              "nodeIds": ["uiComponent:frontend/src/routes/notes.tsx#AddNote"],
+              "sourceRefs": [{ "file": "frontend/src/routes/notes.tsx", "startLine": 30, "endLine": 33 }]
+            }
+          }
+        }
+      ],
+      "provenance": {
+        "method": "inferred",
+        "contract": "lens@0.1.0",
+        "confidence": 0.9,
+        "evidence": { "nodeIds": ["uiComponent:frontend/src/routes/notes.tsx#NotesPage"] }
+      }
+    }
+  ],
+
+  "curriculum": {
+    "spine": "default@0.1.0",
+    "estimatedMinutes": 22,
+    "lessons": [
+      {
+        "id": "lesson.1",
+        "order": 1,
+        "intent": "purpose",
+        "question": "What problem does this system solve, and for whom?",
+        "narrative": "One person, keeping short pieces of text they will want back later. Everything else follows from how small that is: there is no sharing, so there is no permission model beyond 'is this caller signed in'; there is no search, so there is no index; there is no background work, so every code path is a direct response to a request.\n\nHolding that scope in mind is what makes the rest legible. A reader who assumes this is a collaboration product will keep looking for machinery that was deliberately never built.",
+        "predictProbe": {
+          "id": "probe.l1",
+          "kind": "predict",
+          "question": "The system stores notes belonging to signed-in people. Before looking: how many database tables would you expect?",
+          "answer": "One. There is a single `Note` table. Ownership is enforced by requiring a signed-in caller rather than by a relation, which is a simplification you would not keep the moment two people needed to see the same note.",
+          "commonWrongAnswer": "Two — a users table and a notes table with a foreign key. Reasonable, and it is what this would become; but the fixture authenticates without persisting users, so the relation does not exist yet. Expecting it and not finding it is itself informative about how early this system is.",
+          "difficulty": "intro"
+        },
+        "reveal": {
+          "nodeIds": ["dataModel:backend/app/models.py#Note"],
+          "sourceRefs": [{ "file": "backend/app/models.py", "startLine": 22, "endLine": 28 }]
+        },
+        "estimatedMinutes": 3,
+        "provenance": {
+          "method": "inferred",
+          "contract": "curriculum@0.1.0",
+          "confidence": 0.85,
+          "evidence": { "nodeIds": ["dataModel:backend/app/models.py#Note"] }
+        }
+      },
+      {
+        "id": "lesson.4",
+        "order": 4,
+        "intent": "behavior",
+        "question": "How does one note get from a form field into a database row and back onto the screen?",
+        "prerequisiteConceptIds": ["concept.boundary-validation", "concept.orm-mapping"],
+        "narrative": "Follow the shape, not the code. What starts as component state becomes request options, then bytes on the wire, then a `NoteCreate` the server has agreed to accept, then a `Note` row, then a `NotePublic` that deliberately carries less than the row did, then JSON, then component state again.\n\nSeven representations for one note. Each boundary between them is a decision someone made: the validation boundary decides what is admissible, the projection boundary decides what is publishable, and the cache boundary decides what is current. Reading the trace as a sequence of shapes rather than a sequence of function calls is what makes those decisions visible.",
+        "predictProbe": {
+          "id": "probe.l4",
+          "kind": "predict",
+          "question": "Between the browser's form and the row on disk, how many distinct shapes does one note take? Guess a number before playing the trace.",
+          "answer": "Seven, and the count matters less than where they change. Every change of shape is a boundary where something was decided — admissibility, publishability, or freshness.",
+          "commonWrongAnswer": "Two — 'the form object and the database row'. It is the intuitive answer and it hides exactly the parts worth learning: the validated type that guarantees the handler's assumptions, and the public type that keeps `internal_score` off the wire.",
+          "difficulty": "working"
+        },
+        "reveal": {
+          "lensId": "lens.api",
+          "traceIds": ["trace:POST /api/v1/notes/"],
+          "sectionIds": ["sec.api.here"]
+        },
+        "masteryChecks": [
+          {
+            "id": "check.l4.a",
+            "kind": "diagnose",
+            "question": "A new column `owner_email` is added to the `Note` table. Does it appear in the response of `GET /api/v1/notes/`?",
+            "answer": "No. The response is serialised through `NotePublic`, which has no such field. Making it visible requires deliberately adding it there — which is the protection working as intended.",
+            "difficulty": "working"
+          }
+        ],
+        "estimatedMinutes": 6,
+        "provenance": {
+          "method": "inferred",
+          "contract": "curriculum@0.1.0",
+          "confidence": 0.9,
+          "evidence": { "traceIds": ["trace:POST /api/v1/notes/"] }
+        }
+      },
+      {
+        "id": "lesson.7",
+        "order": 7,
+        "intent": "invariants",
+        "question": "What could a future change break here without anything complaining?",
+        "narrative": "Two things hold only by convention.\n\nColumns absent from `NotePublic` stay private — but only because nobody has added them. No test asserts it, and the failure is silent and public.\n\nThe list refreshes after a write only because `AddNote` invalidates its key. Nothing links the mutation to the query; a second write path added elsewhere would need to remember the same thing, and would look correct in review if it did not.\n\nBoth are invariants with `unenforced` status. That is not a criticism of the code — it is the map of where to be careful, and it is the part of a system that documentation almost never records.",
+        "predictProbe": {
+          "id": "probe.l7",
+          "kind": "predict",
+          "question": "Someone adds a second component that creates notes, copying the mutation but not the `onSuccess` handler. Everything type-checks and the POST returns 201. What does the user see?",
+          "answer": "The note is saved but the list does not change, because nothing invalidated the `[\"notes\"]` key. Reloading the page shows it, which is what makes this get reported as 'sometimes notes do not save' — a description that sends you to the server, where nothing is wrong.",
+          "commonWrongAnswer": "Nothing breaks, because the server is the source of truth and returned success. True and irrelevant: the screen is rendered from the cache, not from the server, and the cache was never told.",
+          "difficulty": "working"
+        },
+        "reveal": {
+          "lensId": "lens.frontend",
+          "sectionIds": ["sec.fe.here", "sec.api.invariant"]
+        },
+        "estimatedMinutes": 5,
+        "provenance": {
+          "method": "inferred",
+          "contract": "curriculum@0.1.0",
+          "confidence": 0.85,
+          "evidence": {
+            "sourceRefs": [{ "file": "frontend/src/routes/notes.tsx", "startLine": 32 }]
+          }
+        }
+      }
+    ]
+  },
+
+  "invariants": [
+    {
+      "id": "inv.projection",
+      "statement": "Columns on the Note table that are absent from NotePublic remain unreachable through the API.",
+      "whyItHolds": "Responses are serialised through NotePublic, which has no field to carry them.",
+      "enforcement": "convention",
+      "ifViolated": "Adding the field to NotePublic publishes the column immediately, with no test failing and no review signal.",
+      "conceptIds": ["concept.dto-projection"],
+      "provenance": {
+        "method": "inferred",
+        "contract": "lens@0.1.0",
+        "confidence": 0.9,
+        "evidence": { "sourceRefs": [{ "file": "backend/app/models.py", "startLine": 26 }] }
+      }
+    },
+    {
+      "id": "inv.invalidation",
+      "statement": "Every code path that creates or changes a note invalidates the [\"notes\"] query key.",
+      "whyItHolds": "Currently only one such path exists, and it does so in its onSuccess handler.",
+      "enforcement": "unenforced",
+      "ifViolated": "The list serves a stale cached copy; the change appears lost until a reload, and the symptom points at the server rather than the cache.",
+      "conceptIds": ["concept.cache-invalidation"],
+      "provenance": {
+        "method": "inferred",
+        "contract": "lens@0.1.0",
+        "confidence": 0.9,
+        "evidence": { "sourceRefs": [{ "file": "frontend/src/routes/notes.tsx", "startLine": 32 }] }
+      }
+    }
+  ],
+
+  "failureModes": [
+    {
+      "id": "fail.db",
+      "component": "PostgreSQL container",
+      "componentNodeId": "datastore:db",
+      "failure": "Unreachable — stopped, or the network between it and the backend is down.",
+      "effect": "Every endpoint fails. The browser shows an error state on load; nothing is readable and nothing is writable.",
+      "blastRadius": "total-outage",
+      "handling": "None. There is no retry, no circuit breaker, and no read-only degraded mode.",
+      "gap": "A single database with no replica means its availability is the system's availability. Acceptable for one user; the first thing to change if that stops being true.",
+      "provenance": {
+        "method": "inferred",
+        "contract": "lens@0.1.0",
+        "confidence": 0.8,
+        "evidence": { "sourceRefs": [{ "file": "compose.yml", "startLine": 2 }] }
+      }
+    }
+  ],
+
+  "openQuestions": [
+    {
+      "question": "Who are the actual users, and is single-user operation a deliberate scope decision or simply the current state?",
+      "whyUnresolved": "requires-human-context",
+      "wouldResolveIf": "The repository contained a product README or an ADR recording the scope decision.",
+      "affectsLensIds": ["lens.api"]
+    },
+    {
+      "question": "How is the caller actually authenticated? `get_current_user` raises NotImplementedError.",
+      "whyUnresolved": "not-in-repository",
+      "wouldResolveIf": "The dependency were implemented, or a real auth backend were present.",
+      "affectsLensIds": ["lens.api"]
+    }
+  ],
+
+  "diagnostics": [
+    {
+      "level": "gap",
+      "contract": "orientation@0.1.0",
+      "message": "No product documentation, ADRs or runbooks exist in this repository, so all purpose and rationale content is derived from code alone and is correspondingly lower confidence."
+    }
+  ]
+}

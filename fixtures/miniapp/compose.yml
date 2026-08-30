@@ -1,0 +1,23 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      - POSTGRES_PASSWORD=changethis
+      - POSTGRES_DB=app
+    ports:
+      - "5432:5432"
+
+  backend:
+    build: ./backend
+    depends_on:
+      - db
+    environment:
+      - SECRET_KEY=changethis
+      - POSTGRES_PASSWORD=changethis
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"

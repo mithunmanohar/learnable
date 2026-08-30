@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://learnable.dev/spec/kb.schema.json",
+  "title": "Learnable Knowledge Base",
+  "description": "A portable, diffable description of a software system, structured for learning rather than for documentation. Every fact carries provenance so a reader can always jump from a claim to the evidence for it.",
+  "type": "object",
+  "required": ["kbVersion", "generatedAt", "generator", "repo", "nodes", "edges"],
+  "additionalProperties": false,
+  "properties": {
+    "kbVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of this schema the document conforms to."
+    },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "generator": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "repo": { "$ref": "#/$defs/RepoInfo" },
+    "stack": {
+      "type": "array",
+      "description": "Detected technology choices, first-class because 'what is this built with' is a primary learning question.",
+      "items": { "$ref": "#/$defs/StackItem" }
+    },
+    "nodes": { "type": "array", "items": { "$ref": "#/$defs/Node" } },
+    "edges": { "type": "array", "items": { "$ref": "#/$defs/Edge" } },
+    "traces": {
+      "type": "array",
+      "description": "End-to-end execution narratives. The primary learning view.",
+      "items": { "$ref": "#/$defs/Trace" }
+    },
+    "conceptBindings": {
+      "type": "array",
+      "description": "Links from repo-independent concepts (see concept.schema.json) to concrete nodes in this repo.",
+      "items": { "$ref": "#/$defs/ConceptBinding" }
+    },
+    "decisions": {
+      "type": "array",
+      "description": "Reconstructed architectural decisions, ADR-shaped.",
+      "items": { "$ref": "#/$defs/Decision" }
+    },
+    "diagnostics": {
+      "type": "array",
+      "description": "What the extractors could NOT determine. Recording coverage gaps explicitly is what keeps the KB honest.",
+      "items": { "$ref": "#/$defs/Diagnostic" }
+    }
+  },
+
+  "$defs": {
+    "RepoInfo": {
+      "type": "object",
+      "required": ["name", "scannedFiles"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "remote": { "type": "string" },
+        "branch": { "type": "string" },
+        "commit": { "type": "string" },
+        "scannedFiles": { "type": "integer", "minimum": 0 },
+        "languages": {
+          "type": "object",
+          "description": "File count per detected language.",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+
+    "SourceRef": {
+      "type": "object",
+      "description": "A citation. Points at the exact bytes that justify a claim.",
+      "required": ["file", "startLine"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string", "description": "Repo-relative POSIX path." },
+        "startLine": { "type": "integer", "minimum": 1 },
+        "endLine": { "type": "integer", "minimum": 1 },
+        "excerpt": { "type": "string", "maxLength": 2000 }
+      }
+    },
+
+    "Provenance": {
+      "type": "object",
+      "description": "How a fact came to be known. The trust backbone of the whole format.",
+      "required": ["method", "extractor"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "enum": ["extracted", "heuristic", "inferred", "authored"],
+          "description": "extracted = read directly from an AST or manifest, always true of the source as parsed. heuristic = pattern/naming/convention match, usually true, occasionally wrong. inferred = produced by a language model, must be treated as a claim. authored = written by a human."
+        },
+        "extractor": {
+          "type": "string",
+          "description": "Identifier of the producing component, e.g. 'python.fastapi@0.1.0'."
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/SourceRef" } },
+        "note": { "type": "string" }
+      }
+    },
+
+    "Layer": {
+      "enum": ["ui", "client", "transport", "api", "domain", "data", "infra", "external", "config", "test", "build", "unknown"],
+      "description": "Where a node sits in the stack. Drives the vertical axis of the trace view."
+    },
+
+    "NodeKind": {
+      "enum": [
+        "service", "module", "file", "symbol", "route", "uiComponent",
+        "dataModel", "datastore", "externalService", "infraResource",
+        "envVar", "job", "test", "dependency"
+      ]
+    },
+
+    "Node": {
+      "type": "object",
+      "required": ["id", "kind", "name", "layer", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable and deterministic across scans, so two KBs can be diffed. Convention: '<kind>:<path>#<symbol>'."
+        },
+        "kind": { "$ref": "#/$defs/NodeKind" },
+        "name": { "type": "string" },
+        "qualifiedName": { "type": "string" },
+        "serviceId": { "type": "string", "description": "Owning service node id." },
+        "layer": { "$ref": "#/$defs/Layer" },
+        "location": { "$ref": "#/$defs/SourceRef" },
+        "summary": { "type": "string", "description": "Human-readable gloss. Check provenance.method before trusting." },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "attrs": {
+          "type": "object",
+          "description": "Kind-specific payload. See spec/README.md for the shape per node kind.",
+          "additionalProperties": true
+        },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "EdgeKind": {
+      "enum": [
+        "imports", "calls", "renders", "handles", "httpCall",
+        "readsFrom", "writesTo", "transformsTo", "extends", "validates",
+        "definedIn", "dependsOn", "deploys", "configures", "changesWith",
+        "authGuards", "emits", "consumes", "tests"
+      ]
+    },
+
+    "Edge": {
+      "type": "object",
+      "required": ["id", "from", "to", "kind", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "from": { "type": "string", "description": "Source node id." },
+        "to": { "type": "string", "description": "Target node id." },
+        "kind": { "$ref": "#/$defs/EdgeKind" },
+        "weight": {
+          "type": "number",
+          "description": "Edge-kind specific. For changesWith, the co-change ratio in [0,1]."
+        },
+        "label": { "type": "string" },
+        "attrs": { "type": "object", "additionalProperties": true },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "DataShape": {
+      "type": "object",
+      "description": "The form data takes at one point in its journey. Collecting these along a trace yields the data-lifecycle view for free.",
+      "required": ["name", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "nodeId": { "type": "string", "description": "Backing dataModel node, when one exists." },
+        "kind": {
+          "enum": ["form-state", "wire", "dto", "domain", "row", "query", "cache", "event", "unknown"],
+          "description": "Which representation this is. The interesting engineering happens where kind changes."
+        },
+        "note": { "type": "string" }
+      }
+    },
+
+    "TraceStep": {
+      "type": "object",
+      "required": ["index", "role", "title", "layer", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "nodeId": { "type": "string" },
+        "layer": { "$ref": "#/$defs/Layer" },
+        "role": {
+          "enum": [
+            "ui-event", "client-call", "transport", "route", "middleware",
+            "validation", "handler", "domain", "query", "store",
+            "serialize", "response", "render", "side-effect"
+          ]
+        },
+        "title": { "type": "string" },
+        "detail": { "type": "string" },
+        "dataShape": { "$ref": "#/$defs/DataShape" },
+        "location": { "$ref": "#/$defs/SourceRef" },
+        "conceptIds": { "type": "array", "items": { "type": "string" } },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "Trace": {
+      "type": "object",
+      "required": ["id", "title", "kind", "steps", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "description": "Phrased as a user-visible action, e.g. 'Visitor signs up'." },
+        "kind": { "enum": ["request", "job", "startup", "auth", "realtime"] },
+        "entryNodeId": { "type": "string" },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/TraceStep" } },
+        "conceptIds": { "type": "array", "items": { "type": "string" } },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "ConceptBinding": {
+      "type": "object",
+      "description": "An instance of a transferable concept, sighted in this repo.",
+      "required": ["conceptId", "nodeIds", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "conceptId": { "type": "string" },
+        "nodeIds": { "type": "array", "items": { "type": "string" } },
+        "strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "How clearly this repo exemplifies the concept. Drives which instance is shown first when the concept recurs across repos."
+        },
+        "note": { "type": "string", "description": "What is specific about how THIS repo does it." },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "Decision": {
+      "type": "object",
+      "required": ["id", "title", "chosen", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "chosen": { "type": "string" },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["option"],
+            "additionalProperties": false,
+            "properties": {
+              "option": { "type": "string" },
+              "whyNot": { "type": "string" }
+            }
+          }
+        },
+        "tradeoffs": { "type": "array", "items": { "type": "string" } },
+        "relatedNodeIds": { "type": "array", "items": { "type": "string" } },
+        "conceptIds": { "type": "array", "items": { "type": "string" } },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+
+    "Diagnostic": {
+      "type": "object",
+      "required": ["level", "extractor", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "level": { "enum": ["info", "gap", "warn", "error"] },
+        "extractor": { "type": "string" },
+        "message": { "type": "string" },
+        "file": { "type": "string" }
+      }
+    },
+
+    "StackItem": {
+      "type": "object",
+      "required": ["id", "name", "category", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "category": {
+          "enum": [
+            "language", "runtime", "frontend-framework", "backend-framework",
+            "ui-library", "styling", "state-management", "routing", "data-fetching",
+            "orm", "database", "cache", "queue", "auth", "validation",
+            "build", "test", "lint", "container", "iac", "ci", "observability", "other"
+          ]
+        },
+        "role": { "type": "string", "description": "What job it does in THIS system, not in general." },
+        "serviceIds": { "type": "array", "items": { "type": "string" } },
+        "conceptIds": { "type": "array", "items": { "type": "string" } },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    }
+  }
+}
